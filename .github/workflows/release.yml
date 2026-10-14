@@ -1,0 +1,43 @@
+name: Release
+
+# Push a tag like v0.2.0 to build the Windows installer, sign the update bundle,
+# and publish a GitHub Release with latest.json for the in-app updater.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: Token View ${{ github.ref_name }}
+          releaseBody: "설치: 아래 `Token View_*_x64-setup.exe`를 내려받아 실행하세요. 이미 설치돼 있다면 앱이 자동으로 업데이트를 알려 줍니다."
+          releaseDraft: false
+          prerelease: false
+          includeUpdaterJson: true
