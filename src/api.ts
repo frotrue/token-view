@@ -53,6 +53,41 @@ export interface Unpriced {
   tokens: number;
 }
 
+export interface SessionRow extends TokenSums {
+  source: Source;
+  session: string;
+  project: string;
+  firstTs: number;
+  lastTs: number;
+  models: string;
+}
+
+export interface LiveResult {
+  ok: boolean;
+  ts: number;
+  error?: string;
+  info?: Record<string, unknown>;
+}
+export interface StatusPage {
+  id: string;
+  name: string;
+  url: string;
+  indicator: "none" | "minor" | "major" | "critical" | "maintenance" | "unknown";
+  description: string;
+}
+export interface Live {
+  claude?: LiveResult | null;
+  codex?: LiveResult | null;
+  status?: { ts: number; pages: StatusPage[] } | null;
+  codexInfo?: {
+    ts: number;
+    planType?: string;
+    credits?: { hasCredits: boolean; unlimited: boolean; balance?: string };
+    resetCredits?: number;
+    reached?: string | null;
+  };
+}
+
 export interface Dashboard {
   now: number;
   totals: TotalRow[];
@@ -63,6 +98,7 @@ export interface Dashboard {
   fine: FineRow[];
   limits: LimitSnap[];
   unpriced: Unpriced[];
+  sessions: SessionRow[];
 }
 
 export interface ScanStatus {
@@ -119,6 +155,19 @@ export interface UiSettings {
   monthlyBudget: number | null;
   budgetClaude: number | null;
   budgetCodex: number | null;
+  /** Poll Anthropic's (unofficial) OAuth usage endpoint with Claude Code's login. */
+  claudeApi: boolean;
+  /** Ask the local Codex app-server for current limits. */
+  codexLive: boolean;
+  serviceStatus: boolean;
+  liveSecs: number;
+  notify: {
+    enabled: boolean;
+    thresholds: number[];
+    exhaust: boolean;
+    budget: boolean;
+    reset: boolean;
+  };
 }
 
 export const DEFAULT_SETTINGS: UiSettings = {
@@ -129,6 +178,11 @@ export const DEFAULT_SETTINGS: UiSettings = {
   monthlyBudget: null,
   budgetClaude: null,
   budgetCodex: null,
+  claudeApi: false,
+  codexLive: true,
+  serviceStatus: true,
+  liveSecs: 300,
+  notify: { enabled: true, thresholds: [80, 95], exhaust: true, budget: true, reset: false },
 };
 
 export interface Sources {
@@ -157,8 +211,16 @@ export const api = {
   refreshPricing: () => invoke<PricingInfo>("refresh_pricing"),
   statusline: () => (inTauri ? invoke<StatuslineStatus>("statusline_status") : Promise.resolve(null)),
   statuslineConnect: (connect: boolean) => invoke<StatuslineStatus>("statusline_connect", { connect }),
+  live: () => (inTauri ? invoke<Live>("get_live") : Promise.resolve({} as Live)),
+  refreshLive: () => invoke<Live>("refresh_live_now"),
+  updateTray: (tooltip: string, bars: { pct: number; color: string }[]) =>
+    inTauri ? invoke<void>("update_tray", { tooltip, bars }) : Promise.resolve(),
+  exportData: (kind: "events" | "daily" | "json", path: string) => invoke<number>("export_data", { kind, path }),
   inTauri,
-  settings: async () => ({ ...DEFAULT_SETTINGS, ...(await call<Partial<UiSettings>>("get_settings")) }),
+  settings: async () => {
+    const s = await call<Partial<UiSettings>>("get_settings");
+    return { ...DEFAULT_SETTINGS, ...s, notify: { ...DEFAULT_SETTINGS.notify, ...(s?.notify ?? {}) } };
+  },
   setSettings: (settings: UiSettings) => invoke<void>("set_settings", { settings }),
   sources: () => call<Sources>("get_sources"),
   onStatus: (cb: (s: ScanStatus) => void): Promise<UnlistenFn> =>

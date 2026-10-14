@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, DEFAULT_SETTINGS, type Dashboard, type ScanStatus, type Sources, type UiSettings } from "./api";
+import { api, DEFAULT_SETTINGS, type Dashboard, type Live, type ScanStatus, type Sources, type UiSettings } from "./api";
+import { buildLimitViews, dailySeries, project } from "./forecast";
 import { fmtAgo, makeMoney } from "./format";
+import { evaluateAlerts } from "./notify";
 import { Limits } from "./Limits";
 import { Overview } from "./Overview";
 import { Settings } from "./Settings";
 import { Stats } from "./Stats";
-import { AppCtx, useColors } from "./ui";
+import { AppCtx, srcColor, useColors } from "./ui";
 import { useUpdater } from "./update";
 
 type Tab = "overview" | "limits" | "stats" | "settings";
@@ -23,6 +25,7 @@ export default function App() {
   const [status, setStatus] = useState<ScanStatus | null>(null);
   const [sources, setSources] = useState<Sources | null>(null);
   const [error, setError] = useState("");
+  const [live, setLive] = useState<Live>({});
   const [, tick] = useState(0);
   const colors = useColors();
   const updater = useUpdater();
@@ -30,9 +33,10 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      const [d, src] = await Promise.all([api.dashboard(), api.sources()]);
+      const [d, src, lv] = await Promise.all([api.dashboard(), api.sources(), api.live()]);
       setData(d);
       setSources(src);
+      setLive(lv);
       setError("");
     } catch (e) {
       setError(String(e));
@@ -58,6 +62,21 @@ export default function App() {
   }, [load]);
 
   const money = useMemo(() => makeMoney(settings), [settings]);
+
+  // After every refresh: tray icon/tooltip and alerts. Runs while the window is hidden.
+  useEffect(() => {
+    if (!data) return;
+    const views = buildLimitViews(data).filter((v) => !v.idle);
+    const month = project(dailySeries(data.daily, "cost", "all"), settings.monthlyBudget);
+    const today = month.today;
+    const lines = views.map((v) => `${v.title} ${v.windowLabel} ${Math.round(v.nowPct)}%${v.estimated ? "*" : ""}`);
+    const tooltip = ["Token View", ...lines, `오늘 ${money(today)}`].join("\n").slice(0, 120); // Windows caps tray tooltips at 127 chars
+    api.updateTray(
+      tooltip,
+      views.slice(0, 3).map((v) => ({ pct: v.nowPct, color: srcColor(colors, v.source) })),
+    ).catch(() => {});
+    evaluateAlerts(views, month, settings, money).catch(() => {});
+  }, [data, settings, money, colors]);
   const running = status?.running;
   const prog = status && status.bytes_total ? status.bytes_done / status.bytes_total : 0;
   const empty = data && data.totals.length === 0;
@@ -77,6 +96,7 @@ export default function App() {
           ))}
         </nav>
         <span className="spacer" />
+        <ServiceBadges live={live} />
         <div className="scanline">
           {running ? (
             <>
@@ -144,6 +164,32 @@ export default function App() {
           </AppCtx.Provider>
         )}
       </main>
+    </div>
+  );
+}
+
+const STATUS_COLOR: Record<string, string> = {
+  none: "var(--good)",
+  maintenance: "var(--accent)",
+  minor: "var(--warning)",
+  major: "var(--serious)",
+  critical: "var(--critical)",
+  unknown: "var(--muted)",
+};
+
+/** Claude / OpenAI status page indicators; a label only appears when something is wrong. */
+function ServiceBadges({ live }: { live: Live }) {
+  const pages = live.status?.pages ?? [];
+  if (!pages.length) return null;
+  return (
+    <div className="badges">
+      {pages.map((p) => (
+        <span key={p.id} className="badge" title={`${p.name}: ${p.description}`}>
+          <span className="dot" style={{ background: STATUS_COLOR[p.indicator] ?? "var(--muted)" }} />
+          {p.name}
+          {p.indicator !== "none" && p.indicator !== "unknown" && <b>{p.indicator === "maintenance" ? "점검" : "장애"}</b>}
+        </span>
+      ))}
     </div>
   );
 }

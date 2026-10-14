@@ -8,6 +8,9 @@
   "permissions": [
     "core:default",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "notification:default",
+    "autostart:default",
+    "dialog:allow-save"
   ]
 }

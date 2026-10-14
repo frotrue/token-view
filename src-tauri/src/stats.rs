@@ -85,6 +85,16 @@ pub fn dashboard(conn: &Connection) -> rusqlite::Result<Value> {
         &[&since8],
     )?;
 
+    let sessions = query(
+        conn,
+        &format!(
+            "SELECT source, session, max(project), min(ts) AS first, max(ts), group_concat(DISTINCT model), {TOKENS}
+             FROM events WHERE ts >= ?1 AND session != '' GROUP BY source, session ORDER BY first DESC LIMIT 500"
+        ),
+        &["source", "session", "project", "firstTs", "lastTs", "models"],
+        &[&since],
+    )?;
+
     let mut st = conn.prepare(
         "SELECT source, limit_id, win, ts, used_pct, window_minutes, resets_at, plan
          FROM limits WHERE ts >= ?1 ORDER BY ts",
@@ -129,6 +139,7 @@ pub fn dashboard(conn: &Connection) -> rusqlite::Result<Value> {
         "dailyProject": daily_project,
         "hourly": hourly,
         "fine": fine,
+        "sessions": sessions,
         "limits": limits,
         "unpriced": unpriced,
     }))

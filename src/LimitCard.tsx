@@ -43,6 +43,12 @@ function StatusLine({ v }: { v: LimitView }) {
       <>
         현재 속도면 리셋 시 약 <b>{Math.round(Math.min(v.atReset, 100))}%</b>
         <span className="muted"> · 리셋 전 소진 없음</span>
+        {v.atResetRange && (
+          <div className="muted" style={{ fontSize: 12 }}>
+            평소 사용 패턴 기준 {Math.round(v.atResetRange[0])}~{Math.min(100, Math.round(v.atResetRange[1]))}%
+            {v.atResetRange[1] >= 100 ? " · 많이 쓰면 소진될 수 있어요" : ""}
+          </div>
+        )}
       </>
     );
   }
@@ -93,6 +99,14 @@ export function LimitCard({ v, detailed = false }: { v: LimitView; detailed?: bo
             <dd>{v.recentRate.toFixed(2)}%/시간</dd>
             <dt>윈도우 평균 속도</dt>
             <dd>{v.avgRate.toFixed(2)}%/시간</dd>
+            {v.atResetRange && (
+              <>
+                <dt>리셋 시 범위 (80%)</dt>
+                <dd>
+                  {Math.round(v.atResetRange[0])}% ~ {Math.round(v.atResetRange[1])}%
+                </dd>
+              </>
+            )}
             <dt>평균 속도 기준</dt>
             <dd>{v.exhaustAtAvg ? `${fmtDateTime(v.exhaustAtAvg)} 소진` : `리셋 시 약 ${Math.round(Math.min(100, v.atResetAvg))}%`}</dd>
             <dt>남은 여유</dt>

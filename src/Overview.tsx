@@ -67,8 +67,9 @@ export function Overview() {
           value={money(pc.mtd)}
           detail={
             <>
-              <span>
+              <span title="최근 56일의 하루 사용량 변동으로 계산한 10~90% 범위">
                 월말 예상 <b style={{ color: "var(--ink)" }}>{money(pc.projectedMonth)}</b>
+                {pc.monthRange && ` (${money(pc.monthRange[0], true)}~${money(pc.monthRange[1], true)})`}
               </span>
               {pc.budget ? <span>예산 {money(pc.budget)}</span> : null}
             </>
@@ -212,7 +213,7 @@ function MonthChart() {
   return (
     <Card
       title={`${now.getMonth() + 1}월 누적`}
-      sub={`월말 예상 ${fmt(proj.all.p.projectedMonth)}`}
+      sub={`월말 예상 ${fmt(proj.all.p.projectedMonth)}${proj.all.p.monthRange ? ` · 범위 ${fmt(proj.all.p.monthRange[0])}~${fmt(proj.all.p.monthRange[1])}` : ""}`}
       right={<Seg value={metric} onChange={setMetric} options={[["cost", "비용"], ["tokens", "토큰"]]} />}
     >
       <div className="legend" style={{ marginBottom: 8 }}>

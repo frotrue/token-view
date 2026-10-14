@@ -18,7 +18,7 @@ export function Limits({ claudeHooked }: { claudeHooked: boolean }) {
             <>Claude 한도 수집이 연결돼 있어요. 터미널의 Claude Code를 한 번 사용하면 상태줄이 갱신되면서 실제 5시간/주간 %가 기록됩니다.</>
           ) : (
             <>
-              Claude 한도의 실제 %는 터미널 Claude Code의 상태줄로만 받을 수 있어요 (데스크톱 앱은 상태줄을 실행하지 않아요). 지금 보이는 Claude 한도는 과거 “한도 도달” 기록과 사용 비용으로 추정한 값이에요. 설정 → <b>Claude 한도 수집</b>에서 연결할 수 있어요.
+              Claude 한도의 실제 %는 터미널 Claude Code의 상태줄로만 받을 수 있어요 (데스크톱 앱은 상태줄을 실행하지 않아요). 지금 보이는 Claude 한도는 과거 “한도 도달” 기록과 사용 비용으로 추정한 값이에요. 실제 %를 보려면 설정 → <b>실시간 한도 조회</b>에서 Claude 사용량 API를 켜거나, <b>Claude 한도 수집</b>에서 상태줄을 연결하세요.
             </>
           )}
         </div>

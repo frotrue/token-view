@@ -1,9 +1,12 @@
 mod db;
+mod export;
+mod live;
 mod pricing;
 mod remote;
 mod scan;
 mod stats;
 pub mod statusline;
+mod tray;
 
 use pricing::Pricing;
 use scan::ScanStatus;
@@ -20,6 +23,9 @@ struct AppState {
     db_path: PathBuf,
     status: Mutex<ScanStatus>,
     trigger: Mutex<Sender<()>>,
+    /// Results of the last live refresh (limits APIs, status pages).
+    live: Mutex<Value>,
+    last_live: Mutex<i64>,
 }
 
 fn err<E: ToString>(e: E) -> String {
@@ -149,18 +155,36 @@ fn get_sources() -> Value {
     })
 }
 
-/// Short tray tooltip: today's API-equivalent spend.
-fn tray_text(db_path: &PathBuf) -> String {
-    let Ok(conn) = db::open(db_path) else { return "Token View".into() };
-    let today: (f64, i64) = conn
-        .query_row(
-            "SELECT coalesce(sum(cost),0), coalesce(sum(input+cache_write_5m+cache_write_1h+cache_read+output),0)
-             FROM events WHERE date(ts/1000,'unixepoch','localtime') = date('now','localtime')",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .unwrap_or((0.0, 0));
-    format!("Token View\n오늘 ${:.2} · {:.1}M 토큰", today.0, today.1 as f64 / 1e6)
+fn setting_bool(ui: &Value, key: &str, default: bool) -> bool {
+    ui.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
+}
+
+/// Polls live limit sources and status pages, at most every `liveSecs` seconds.
+fn refresh_live(app: &AppHandle, force: bool) {
+    let state = app.state::<AppState>();
+    let Ok(conn) = db::open(&state.db_path) else { return };
+    let ui = ui_settings(&conn);
+    let every = ui.get("liveSecs").and_then(|v| v.as_i64()).unwrap_or(300).clamp(60, 3600) * 1000;
+    let now = chrono::Utc::now().timestamp_millis();
+    {
+        let mut last = state.last_live.lock().unwrap();
+        if !force && now - *last < every {
+            return;
+        }
+        *last = now;
+    }
+    let outcome = |r: Result<Value, String>| match r {
+        Ok(v) => json!({ "ok": true, "ts": now, "info": v }),
+        Err(e) => json!({ "ok": false, "ts": now, "error": e }),
+    };
+    let claude = if setting_bool(&ui, "claudeApi", false) {
+        outcome(live::claude_usage(&conn).map(|n| json!({ "windows": n })))
+    } else {
+        Value::Null
+    };
+    let codex = if setting_bool(&ui, "codexLive", true) { outcome(live::codex_limits(&conn)) } else { Value::Null };
+    let status = if setting_bool(&ui, "serviceStatus", true) { live::service_status() } else { Value::Null };
+    *state.live.lock().unwrap() = json!({ "claude": claude, "codex": codex, "status": status });
 }
 
 fn start_scanner(app: AppHandle, rx: std::sync::mpsc::Receiver<()>) {
@@ -175,12 +199,10 @@ fn start_scanner(app: AppHandle, rx: std::sync::mpsc::Receiver<()>) {
         if let Ok(conn) = db::open(&db_path) {
             let _ = remote::refresh(&conn, false); // offline is fine: keep the last table
         }
+        refresh_live(&app, false);
         let result = scan::run_scan(&db_path, &mut report);
         *state.status.lock().unwrap() = result.clone();
         let _ = app.emit("data-updated", result);
-        if let Some(tray) = app.tray_by_id("main") {
-            let _ = tray.set_tooltip(Some(tray_text(&db_path)));
-        }
         let secs = db::open(&db_path)
             .ok()
             .and_then(|c| ui_settings(&c).get("refreshSecs").and_then(|v| v.as_u64()))
@@ -190,6 +212,44 @@ fn start_scanner(app: AppHandle, rx: std::sync::mpsc::Receiver<()>) {
         let _ = rx.recv_timeout(Duration::from_secs(secs));
         while rx.try_recv().is_ok() {}
     });
+}
+
+#[tauri::command]
+fn get_live(state: State<AppState>) -> Value {
+    let mut v = state.live.lock().unwrap().clone();
+    if let Ok(conn) = db::open(&state.db_path) {
+        if let Some(info) = db::get_setting(&conn, "codex_live").and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
+            v["codexInfo"] = info;
+        }
+    }
+    v
+}
+
+/// Re-query live limits now (ignores the polling interval), then rescan.
+#[tauri::command]
+async fn refresh_live_now(app: AppHandle) -> Value {
+    let a = app.clone();
+    let _ = tauri::async_runtime::spawn_blocking(move || refresh_live(&a, true)).await;
+    let state = app.state::<AppState>();
+    let _ = state.trigger.lock().unwrap().send(());
+    let v = state.live.lock().unwrap().clone();
+    v
+}
+
+#[tauri::command]
+fn update_tray(app: AppHandle, tooltip: String, bars: Vec<tray::TrayBar>) {
+    if let Some(t) = app.tray_by_id("main") {
+        let _ = t.set_tooltip(Some(tooltip));
+        if !bars.is_empty() {
+            let _ = t.set_icon(Some(tray::render(&bars)));
+        }
+    }
+}
+
+#[tauri::command]
+fn export_data(state: State<AppState>, kind: String, path: String) -> Result<usize, String> {
+    let conn = db::open(&state.db_path).map_err(err)?;
+    export::export(&conn, &kind, std::path::Path::new(&path))
 }
 
 fn show_main(app: &AppHandle) {
@@ -203,8 +263,16 @@ fn show_main(app: &AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // Must be first: a second launch just brings the running window forward.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--minimized"]),
+        ))
         .setup(|app| {
             let dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&dir)?;
@@ -215,7 +283,16 @@ pub fn run() {
                 db_path,
                 status: Mutex::new(ScanStatus::default()),
                 trigger: Mutex::new(tx),
+                live: Mutex::new(json!({})),
+                last_live: Mutex::new(0),
             });
+
+            // Started with Windows (autostart passes --minimized): stay in the tray.
+            if !std::env::args().any(|a| a == "--minimized") {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                }
+            }
 
             let open = MenuItem::with_id(app, "open", "열기", true, None::<&str>)?;
             let refresh = MenuItem::with_id(app, "refresh", "지금 새로고침", true, None::<&str>)?;
@@ -269,7 +346,11 @@ pub fn run() {
             get_sources,
             refresh_pricing,
             statusline_status,
-            statusline_connect
+            statusline_connect,
+            get_live,
+            refresh_live_now,
+            update_tray,
+            export_data
         ])
         .run(tauri::generate_context!())
         .expect("error while running Token View");
@@ -300,4 +381,11 @@ pub fn cli_snapshot(db_path: &std::path::Path) -> Value {
 #[doc(hidden)]
 pub fn builtin_pricing_json() -> String {
     serde_json::to_string_pretty(&Pricing::default()).unwrap()
+}
+
+/// Codex live limits + status pages against a scratch DB (`cargo run --example live`).
+#[doc(hidden)]
+pub fn cli_live(db_path: &std::path::Path) -> Value {
+    let conn = db::open(db_path).unwrap();
+    json!({ "codex": live::codex_limits(&conn).map_err(|e| e), "status": live::service_status() })
 }

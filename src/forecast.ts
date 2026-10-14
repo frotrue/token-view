@@ -1,9 +1,49 @@
-import type { Dashboard, DailyRow, FineRow, LimitSnap, Source } from "./api";
+import type { Dashboard, DailyRow, FineRow, HourlyRow, LimitSnap, Source } from "./api";
 import { totalTokens } from "./api";
 import { addDays, dayKey, parseDay } from "./format";
 
 const HOUR = 3_600_000;
 const DAY = 86_400_000;
+
+// ---------------------------------------------------------------- uncertainty
+
+export interface Quantiles {
+  p10: number;
+  p50: number;
+  p90: number;
+}
+
+/**
+ * Empirical spread of "how much gets used in the next `len` units": the sums of every
+ * contiguous `len`-long stretch of the user's own recent history. No distribution is
+ * assumed; quiet nights and busy afternoons are both in the sample.
+ */
+export function windowQuantiles(values: number[], len: number): Quantiles | null {
+  if (len <= 0 || values.length < len || values.length < 2) return null;
+  const sums: number[] = [];
+  let acc = 0;
+  for (let i = 0; i < values.length; i++) {
+    acc += values[i];
+    if (i >= len) acc -= values[i - len];
+    if (i >= len - 1) sums.push(acc);
+  }
+  sums.sort((a, b) => a - b);
+  const q = (p: number) => sums[Math.min(sums.length - 1, Math.max(0, Math.round(p * (sums.length - 1))))];
+  return { p10: q(0.1), p50: q(0.5), p90: q(0.9) };
+}
+
+/** Hourly cost for the last `hours` full hours (oldest first), zero-filled. */
+export function hourlySeries(hourly: HourlyRow[], source: Source | "all", hours: number, now = Date.now()): number[] {
+  const end = Math.floor(now / HOUR) * HOUR; // current (partial) hour excluded
+  const start = end - hours * HOUR;
+  const out = new Array<number>(hours).fill(0);
+  for (const r of hourly) {
+    if (source !== "all" && r.source !== source) continue;
+    if (r.hour < start || r.hour >= end) continue;
+    out[Math.floor((r.hour - start) / HOUR)] += r.cost;
+  }
+  return out;
+}
 
 // ---------------------------------------------------------------- rate limits
 
@@ -41,6 +81,8 @@ export interface LimitView {
   exhaustAtAvg: number | null;
   atReset: number;
   atResetAvg: number;
+  /** 10th–90th percentile of usage at reset, from the user's own pacing history. */
+  atResetRange: [number, number] | null;
   /** API-equivalent USD that 100% of this window corresponds to (learned). */
   usdPerFull: number | null;
   status: "ok" | "warn" | "danger" | "idle";
@@ -182,6 +224,11 @@ export function buildLimitViews(d: Dashboard): LimitView[] {
     };
     const r = proj(recentRate);
     const a = proj(avgRate);
+    let atResetRange: [number, number] | null = null;
+    if (ratio !== null && hoursLeft > 0 && !idle) {
+      const q = windowQuantiles(hourlySeries(d.hourly, last.source, 28 * 24, now), Math.max(1, Math.ceil(hoursLeft)));
+      if (q) atResetRange = [nowPct + ratio * q.p10, nowPct + ratio * q.p90];
+    }
 
     let status: LimitView["status"] = "ok";
     if (nowPct >= 100 || r.exhaustAt !== null) status = "danger";
@@ -212,6 +259,7 @@ export function buildLimitViews(d: Dashboard): LimitView[] {
       exhaustAtAvg: a.exhaustAt,
       atReset: r.atReset,
       atResetAvg: a.atReset,
+      atResetRange,
       usdPerFull: ratio ? 100 / ratio : null,
       status,
       history: history.slice(-6),
@@ -246,6 +294,8 @@ export interface Projection {
   avg30: number;
   /** Expected value for the rest of today + remaining month days. */
   projectedMonth: number;
+  /** 10th–90th percentile month-end total from historical day-to-day variation. */
+  monthRange: [number, number] | null;
   next7: number;
   next30: number;
   next90: number;
@@ -287,6 +337,18 @@ export function project(series: Map<string, number>, budget: number | null, now 
   const remainingDays = lastDay - now.getDate();
   const projectedMonth = mtd + restToday + avg7 * remainingDays;
 
+  let monthRange: [number, number] | null = null;
+  if (remainingDays > 0) {
+    const days: number[] = [];
+    for (let i = 56; i >= 1; i--) {
+      const k = dayKey(addDays(now, -i));
+      if (firstDate && k < firstDate) continue;
+      days.push(series.get(k) ?? 0);
+    }
+    const q = windowQuantiles(days, remainingDays);
+    if (q) monthRange = [mtd + restToday + q.p10, mtd + restToday + q.p90];
+  }
+
   let budgetHit: Projection["budgetHit"] = null;
   if (budget && budget > 0) {
     if (mtd >= budget) budgetHit = { date: todayKey, already: true };
@@ -307,6 +369,7 @@ export function project(series: Map<string, number>, budget: number | null, now 
     prevAvg7,
     avg30,
     projectedMonth,
+    monthRange,
     next7: avg7 * 7,
     next30: avg7 * 30,
     next90: avg30 * 90,
@@ -342,4 +405,40 @@ export function monthCurve(series: Map<string, number>, p: Projection, now = new
 
 export function daysBetween(a: string, b: string): number {
   return Math.round((parseDay(b).getTime() - parseDay(a).getTime()) / DAY);
+}
+
+// ---------------------------------------------------------------- 5-hour blocks
+
+export interface Block {
+  start: number;
+  end: number;
+  lastActivity: number;
+  requests: number;
+  tokens: number;
+  cost: number;
+  /** A limit-reached record falls inside this block. */
+  hitLimit: boolean;
+}
+
+/**
+ * Splits activity into the 5-hour windows Claude bills against: a window opens at the
+ * first request after the previous one closed, and lasts five hours.
+ */
+export function buildBlocks(fine: FineRow[], limits: LimitSnap[], source: Source, winMs = 5 * HOUR): Block[] {
+  const rows = fine.filter((r) => r.source === source && r.requests > 0).sort((a, b) => a.t - b.t);
+  const hits = limits.filter((l) => l.source === source && l.windowMinutes === winMs / 60_000 && l.usedPct >= 100).map((l) => l.ts);
+  const out: Block[] = [];
+  let cur: Block | null = null;
+  for (const r of rows) {
+    if (!cur || r.t >= cur.end) {
+      cur = { start: r.t, end: r.t + winMs, lastActivity: r.t, requests: 0, tokens: 0, cost: 0, hitLimit: false };
+      out.push(cur);
+    }
+    cur.lastActivity = r.t + 600_000;
+    cur.requests += r.requests;
+    cur.tokens += totalTokens(r);
+    cur.cost += r.cost;
+  }
+  for (const b of out) b.hitLimit = hits.some((t) => t >= b.start && t < b.end);
+  return out.reverse();
 }

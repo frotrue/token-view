@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { api, type PriceEntry, type Pricing, type PricingInfo, type Sources, type StatuslineStatus, type UiSettings } from "./api";
 import { fmtAgo, fmtTokens } from "./format";
+import { ExportCard, LiveCard, NotifyCard, StartupCard } from "./SettingsExtra";
 import { Card, Seg, useApp } from "./ui";
 import type { useUpdater } from "./update";
 
@@ -11,11 +12,16 @@ export function Settings({ onSaved, sources, updater }: { onSaved: (s: UiSetting
   const [s, setS] = useState<UiSettings>(settings);
   const dirty = JSON.stringify(s) !== JSON.stringify(settings);
   const num = (v: string) => (v.trim() === "" ? null : Number(v));
+  const saveButton = (
+    <button className="btn primary" disabled={!dirty} onClick={() => api.setSettings(s).then(() => onSaved(s))}>
+      저장
+    </button>
+  );
 
   return (
     <div className="page">
       <div className="grid g2">
-        <Card title="표시 · 예산" right={<button className="btn primary" disabled={!dirty} onClick={() => api.setSettings(s).then(() => onSaved(s))}>저장</button>}>
+        <Card title="표시 · 예산" right={saveButton}>
           <div className="grid g2" style={{ gap: 14 }}>
             <div className="field">
               <label>통화</label>
@@ -53,8 +59,16 @@ export function Settings({ onSaved, sources, updater }: { onSaved: (s: UiSetting
         <SourcesCard sources={sources} />
       </div>
       <div className="grid g2">
+        <NotifyCard s={s} setS={setS} saveButton={saveButton} />
+        <LiveCard s={s} setS={setS} saveButton={saveButton} />
+      </div>
+      <div className="grid g2">
         <ClaudeLinkCard sources={sources} />
         <AppInfoCard updater={updater} />
+      </div>
+      <div className="grid g2">
+        <StartupCard />
+        <ExportCard />
       </div>
       <PricingCard unpriced={data.unpriced.map((u) => ({ model: u.model, tokens: u.tokens }))} />
     </div>

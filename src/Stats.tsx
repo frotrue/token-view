@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { totalTokens, type Source, type TokenSums } from "./api";
-import type { Metric, SourceFilter } from "./forecast";
-import { addDays, dayKey, fmtInt, fmtTokens, projectName } from "./format";
+import { buildBlocks, type Metric, type SourceFilter } from "./forecast";
+import { addDays, dayKey, fmtDateTime, fmtDuration, fmtInt, fmtTokens, parseDay, projectName } from "./format";
 import { Card, Seg, SrcDot, srcColor, useApp } from "./ui";
 
 const zero = (): TokenSums => ({ input: 0, cacheWrite: 0, cacheRead: 0, output: 0, reasoning: 0, cost: 0, requests: 0 });
@@ -30,6 +30,10 @@ export function Stats() {
       <div className="grid g2">
         <ModelTable keep={keep} />
         <ProjectTable keep={keep} />
+      </div>
+      <div className="grid g2">
+        <SessionTable since={since} src={src} />
+        {src !== "codex" && <BlockTable since={since} />}
       </div>
       <Heatmap src={src} />
     </div>
@@ -278,6 +282,108 @@ function Heatmap({ src }: { src: SourceFilter }) {
       <div className="muted" style={{ fontSize: 12.5, marginTop: 10 }}>
         가장 많이 쓰는 시간: {busiest.filter((b) => b.v > 0).map((b) => `${DOW[b.d]} ${b.h}시`).join(", ") || "-"}
       </div>
+    </Card>
+  );
+}
+
+function SessionTable({ since, src }: { since: string; src: SourceFilter }) {
+  const { data, money } = useApp();
+  const from = since ? parseDay(since).getTime() : 0;
+  const rows = data.sessions.filter((r) => r.lastTs >= from && (src === "all" || r.source === src));
+  return (
+    <Card title="세션별" sub={`${rows.length}개 · 최근 35일까지`}>
+      {rows.length === 0 ? (
+        <div className="empty">이 기간에는 세션이 없어요</div>
+      ) : (
+        <div className="tbl-wrap" style={{ maxHeight: 420, overflowY: "auto" }}>
+          <table>
+            <thead>
+              <tr>
+                <th>시작</th>
+                <th style={{ textAlign: "left" }}>프로젝트</th>
+                <th>길이</th>
+                <th>요청</th>
+                <th>토큰</th>
+                <th>비용</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.slice(0, 200).map((r) => (
+                <tr key={r.source + r.session} title={`${r.models}\n${r.session}`}>
+                  <td>
+                    <SrcDot source={r.source} />
+                    {fmtDateTime(r.firstTs)}
+                  </td>
+                  <td className="name-cell" style={{ textAlign: "left", maxWidth: 180 }} title={r.project}>
+                    {projectName(r.project)}
+                  </td>
+                  <td>{fmtDuration(r.lastTs - r.firstTs)}</td>
+                  <td>{fmtInt(r.requests)}</td>
+                  <td>{fmtTokens(totalTokens(r))}</td>
+                  <td>{money(r.cost)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function BlockTable({ since }: { since: string }) {
+  const { data, money, colors } = useApp();
+  const from = since ? parseDay(since).getTime() : 0;
+  const blocks = useMemo(() => buildBlocks(data.fine, data.limits, "claude"), [data]).filter((b) => b.end >= from);
+  const max = Math.max(1e-9, ...blocks.map((b) => b.cost));
+  const now = Date.now();
+  return (
+    <Card title="Claude 5시간 블록" sub="첫 요청부터 5시간씩 묶은 사용 구간">
+      {blocks.length === 0 ? (
+        <div className="empty">이 기간에는 블록이 없어요</div>
+      ) : (
+        <div className="tbl-wrap" style={{ maxHeight: 420, overflowY: "auto" }}>
+          <table>
+            <thead>
+              <tr>
+                <th>시작</th>
+                <th>사용 시간</th>
+                <th>요청</th>
+                <th>토큰</th>
+                <th>비용</th>
+                <th>시간당</th>
+              </tr>
+            </thead>
+            <tbody>
+              {blocks.slice(0, 200).map((b) => {
+                const active = b.end > now;
+                const hours = Math.max((Math.min(b.lastActivity, b.end) - b.start) / 3_600_000, 1 / 6);
+                return (
+                  <tr key={b.start}>
+                    <td>
+                      {fmtDateTime(b.start)}
+                      {active && <b style={{ marginLeft: 6 }}>진행 중</b>}
+                      {b.hitLimit && (
+                        <span title="이 블록에서 한도에 도달했어요" style={{ marginLeft: 6, color: "var(--critical)" }}>
+                          ● 한도 도달
+                        </span>
+                      )}
+                    </td>
+                    <td>{fmtDuration(Math.min(b.lastActivity, b.end) - b.start)}</td>
+                    <td>{fmtInt(b.requests)}</td>
+                    <td>{fmtTokens(b.tokens)}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <span className="share" style={{ width: `${(b.cost / max) * 40 + 2}px`, background: colors.claude }} />
+                      {money(b.cost)}
+                    </td>
+                    <td>{money(b.cost / hours)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </Card>
   );
 }
