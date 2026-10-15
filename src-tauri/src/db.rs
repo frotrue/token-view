@@ -48,7 +48,10 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
          CREATE TABLE IF NOT EXISTS settings (
              key TEXT PRIMARY KEY,
              value TEXT NOT NULL
-         );",
+         );
+         -- 0.3.0-beta.1 stored the OAuth usage array's duplicate names next to the
+         -- flat ones (five_hour/seven_day), showing every Claude limit twice.
+         DELETE FROM limits WHERE source='claude' AND (win='session' OR win LIKE 'weekly%');",
     )?;
     Ok(conn)
 }
