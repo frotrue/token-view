@@ -34,10 +34,13 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Public "desktop app" OAuth client for Google Drive sync (optional; empty = disabled).
+          TOKEN_VIEW_GOOGLE_CLIENT_ID: ${{ vars.TOKEN_VIEW_GOOGLE_CLIENT_ID }}
+          TOKEN_VIEW_GOOGLE_CLIENT_SECRET: ${{ secrets.TOKEN_VIEW_GOOGLE_CLIENT_SECRET }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Token View ${{ github.ref_name }}
-          releaseBody: "설치: 아래 `Token View_*_x64-setup.exe`를 내려받아 실행하세요. 이미 설치돼 있다면 앱이 자동으로 업데이트를 알려 줍니다."
+          releaseBody: "PC: 아래 `Token.View_*_x64-setup.exe`를 내려받아 실행하세요. 휴대폰(Android): `Token.View_*_android-arm64.apk`를 설치하세요. 이미 설치돼 있다면 두 앱 모두 업데이트를 알려 줍니다."
           releaseDraft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           includeUpdaterJson: true

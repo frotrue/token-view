@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Lets Android offer "allow installs from Token View" the first time. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+    <application>
+        <!-- Own subclass so it never merges with another FileProvider declaration. -->
+        <provider
+            android:name="com.tokenview.apkupdate.ApkFileProvider"
+            android:authorities="${applicationId}.apkupdate"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/apk_update_paths" />
+        </provider>
+    </application>
+</manifest>

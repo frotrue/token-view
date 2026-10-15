@@ -55,6 +55,23 @@ fn window_minutes(name: &str) -> i64 {
     }
 }
 
+/// Short, non-identifying category of a live-query failure (safe to sync).
+pub fn failure_reason(error: &str) -> &'static str {
+    if error.contains("429") {
+        "rate_limited"
+    } else if error.contains("만료") {
+        "expired"
+    } else if error.contains("로그인 정보를 찾지") || error.contains("구독 계정") || error.contains("토큰 없음") {
+        "no_login"
+    } else if error.contains("한도 정보를 찾지") {
+        "format"
+    } else if error.contains("응답 ") {
+        "http"
+    } else {
+        "network"
+    }
+}
+
 // ---------- Claude: OAuth usage endpoint (opt-in) ----------
 
 fn claude_credentials() -> std::path::PathBuf {
@@ -68,6 +85,42 @@ fn claude_credentials() -> std::path::PathBuf {
 
 /// Reads Claude Code's own login token (never stored or sent anywhere but Anthropic)
 /// and asks Anthropic for the current 5-hour / weekly utilisation.
+/// Windows in an OAuth usage response. The response carries the same limits twice:
+/// as flat objects (`five_hour`, `seven_day`, `seven_day_opus`, …) and as a `limits`
+/// array (`session`, `weekly_all`, …). Array kinds are mapped onto the flat names
+/// (which the statusline and history also use) and each window is kept once.
+fn usage_windows(v: &Value) -> Vec<(String, i64, f64, Option<i64>)> {
+    let mut out: Vec<(String, i64, f64, Option<i64>)> = Vec::new();
+    let mut add = |name: &str, pct: f64, resets: Option<i64>| {
+        let wm = window_minutes(name);
+        if wm > 0 && !out.iter().any(|(n, ..)| n == name) {
+            out.push((name.to_owned(), wm, pct, resets));
+        }
+    };
+    if let Some(obj) = v.as_object() {
+        for (k, w) in obj {
+            if let Some(p) = w.get("utilization").and_then(|p| p.as_f64()) {
+                add(k, p, w.get("resets_at").and_then(ts_of));
+            }
+        }
+    }
+    if let Some(arr) = v.get("limits").and_then(|l| l.as_array()) {
+        for l in arr {
+            let kind = l.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+            let name = match kind {
+                "session" => "five_hour".to_owned(),
+                "weekly_all" | "weekly" => "seven_day".to_owned(),
+                k if k.starts_with("weekly_") => format!("seven_day_{}", &k["weekly_".len()..]),
+                k => k.to_owned(),
+            };
+            if let Some(p) = l.get("percent").or_else(|| l.get("utilization")).and_then(|p| p.as_f64()) {
+                add(&name, p, l.get("resets_at").and_then(ts_of));
+            }
+        }
+    }
+    out
+}
+
 pub fn claude_usage(conn: &Connection) -> Result<usize, String> {
     let text = std::fs::read_to_string(claude_credentials())
         .map_err(|_| "Claude Code 로그인 정보를 찾지 못했어요".to_string())?;
@@ -94,42 +147,21 @@ pub fn claude_usage(conn: &Connection) -> Result<usize, String> {
     let v: Value = serde_json::from_str(&body).map_err(|e| e.to_string())?;
     let now = chrono::Utc::now().timestamp_millis();
     let mut n = 0;
-    let mut push = |name: &str, pct: f64, resets: Option<i64>| {
-        let wm = window_minutes(name);
-        if wm == 0 {
-            return;
-        }
+    for (name, minutes, pct, resets) in usage_windows(&v) {
         store(
             conn,
             &LimitSnap {
                 source: "claude",
                 limit_id: "claude".into(),
-                win: name.to_string(),
+                win: name,
                 ts: now,
                 used_pct: pct,
-                window_minutes: wm,
+                window_minutes: minutes,
                 resets_at: resets.unwrap_or(0),
                 plan: String::new(),
             },
         );
         n += 1;
-    };
-    // Newer shape: { "limits": [{ "kind", "percent", "resets_at" }] }
-    if let Some(arr) = v.get("limits").and_then(|l| l.as_array()) {
-        for l in arr {
-            let kind = l.get("kind").and_then(|k| k.as_str()).unwrap_or("");
-            if let Some(p) = l.get("percent").or_else(|| l.get("utilization")).and_then(|p| p.as_f64()) {
-                push(kind, p, l.get("resets_at").and_then(ts_of));
-            }
-        }
-    }
-    // Older shape: { "five_hour": { "utilization", "resets_at" }, "seven_day": {...}, ... }
-    if let Some(obj) = v.as_object() {
-        for (k, w) in obj {
-            if let Some(p) = w.get("utilization").and_then(|p| p.as_f64()) {
-                push(k, p, w.get("resets_at").and_then(ts_of));
-            }
-        }
     }
     if n == 0 {
         return Err("응답에서 한도 정보를 찾지 못했어요".into());
@@ -259,4 +291,31 @@ pub fn service_status() -> Value {
         })
         .collect();
     json!({ "ts": chrono::Utc::now().timestamp_millis(), "pages": list })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_response_windows_are_counted_once_under_the_flat_names() {
+        let v = json!({
+            "five_hour": {"utilization": 22.0, "resets_at": "2026-10-15T08:59:00Z"},
+            "seven_day": {"utilization": 41.0, "resets_at": "2026-10-17T13:59:00Z"},
+            "seven_day_opus": null,
+            "limits": [
+                {"kind": "session", "percent": 22.0, "resets_at": "2026-10-15T08:59:00Z"},
+                {"kind": "weekly_all", "percent": 41.0},
+                {"kind": "weekly_sonnet", "percent": 12.0}
+            ]
+        });
+        let w = usage_windows(&v);
+        let names: Vec<&str> = w.iter().map(|x| x.0.as_str()).collect();
+        assert_eq!(names, ["five_hour", "seven_day", "seven_day_sonnet"]);
+        assert_eq!((w[0].1, w[1].1), (300, 10080));
+        assert!(w[0].3.is_some());
+        // An array-only response still works.
+        let only = usage_windows(&json!({"limits": [{"kind": "session", "percent": 5.0}]}));
+        assert_eq!(only[0].0, "five_hour");
+    }
 }

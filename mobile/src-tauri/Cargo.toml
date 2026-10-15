@@ -1,0 +1,22 @@
+[package]
+name = "token-view-mobile"
+version = "0.3.0"
+description = "Token View for Android: reads the PC's synced usage snapshot"
+edition = "2021"
+
+[lib]
+name = "token_view_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-google-auth = { path = "../plugin-google-auth" }
+tauri-plugin-apk-update = { path = "../plugin-apk-update" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+strip = true

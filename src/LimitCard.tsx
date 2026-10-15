@@ -1,11 +1,13 @@
 import type { ReactNode } from "react";
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { LimitView } from "./forecast";
-import { fmtDateTime, fmtDuration } from "./format";
+import { fmtAgo, fmtDateTime, fmtDuration } from "./format";
 import { StatusIcon, TipBox, srcColor, useApp } from "./ui";
 
 function StatusLine({ v }: { v: LimitView }) {
+  const { snapshotAt } = useApp();
   const now = Date.now();
+  const paceLabel = snapshotAt === undefined ? "현재 속도면" : "캡처 당시 속도면";
   let main: ReactNode;
   if (v.idle) {
     main = (
@@ -28,7 +30,7 @@ function StatusLine({ v }: { v: LimitView }) {
   } else if (v.exhaustAt) {
     main = (
       <>
-        현재 속도면 <b>{fmtDateTime(v.exhaustAt)}</b> 소진 예상
+        {paceLabel} <b>{fmtDateTime(v.exhaustAt)}</b> 소진 예상
         <span className="muted"> · 리셋 {fmtDuration(v.resetsAt - v.exhaustAt)} 전</span>
       </>
     );
@@ -41,7 +43,7 @@ function StatusLine({ v }: { v: LimitView }) {
   } else {
     main = (
       <>
-        현재 속도면 리셋 시 약 <b>{Math.round(Math.min(v.atReset, 100))}%</b>
+        {paceLabel} 리셋 시 약 <b>{Math.round(Math.min(v.atReset, 100))}%</b>
         <span className="muted"> · 리셋 전 소진 없음</span>
         {v.atResetRange && (
           <div className="muted" style={{ fontSize: 12 }}>
@@ -61,8 +63,9 @@ function StatusLine({ v }: { v: LimitView }) {
 }
 
 export function LimitCard({ v, detailed = false }: { v: LimitView; detailed?: boolean }) {
-  const { colors, money } = useApp();
-  const now = Date.now();
+  const { colors, money, snapshotAt } = useApp();
+  const now = snapshotAt ?? Date.now();
+  const expiredSinceCapture = snapshotAt !== undefined && v.resetsAt <= Date.now();
   const color = srcColor(colors, v.source);
   const elapsed = Math.min(1, Math.max(0, (now - v.startAt) / (v.resetsAt - v.startAt)));
   return (
@@ -76,7 +79,7 @@ export function LimitCard({ v, detailed = false }: { v: LimitView; detailed?: bo
       <div className="limit-pct">
         {v.nowPct.toFixed(v.nowPct < 10 ? 1 : 0)}%
         <small>
-          {v.basis === "calibrated" ? "추정 · 과거 한도 도달 기록 기준" : v.estimated ? `추정 · 마지막 확인 ${Math.round(v.lastPct)}%` : "사용"}
+          {v.basis === "calibrated" ? "추정 · 과거 한도 도달 기록 기준" : v.estimated ? `추정 · 마지막 확인 ${Math.round(v.lastPct)}%` : snapshotAt === undefined ? "사용" : "캡처 당시 사용"}
         </small>
       </div>
       <div className="bar" title={`시간 경과 ${Math.round(elapsed * 100)}%`}>
@@ -87,10 +90,11 @@ export function LimitCard({ v, detailed = false }: { v: LimitView; detailed?: bo
         <div className="marker" style={{ left: `calc(${elapsed * 100}% - 1px)` }} />
       </div>
       <div className="limit-meta">
-        <span>{v.idle ? "리셋 시각 미정" : `리셋 ${fmtDateTime(v.resetsAt)} (${fmtDuration(v.resetsAt - now)} 후)`}</span>
+        <span>{v.idle ? "리셋 시각 미정" : expiredSinceCapture ? `기록된 리셋 ${fmtDateTime(v.resetsAt)} · 시각 지남` : `리셋 ${fmtDateTime(v.resetsAt)} (${fmtDuration(v.resetsAt - Date.now())} 후)`}</span>
         <span>시간 경과 {Math.round(elapsed * 100)}%</span>
       </div>
-      <StatusLine v={v} />
+      {snapshotAt !== undefined && <div className="hint limit-capture">{v.basis === "calibrated" ? "추정 기준 마지막 기록" : "한도 마지막 확인"} {fmtDateTime(v.lastSnapTs)} · {fmtAgo(v.lastSnapTs)}</div>}
+      {expiredSinceCapture ? <div className="status"><div>기록된 리셋 시각이 지났어요. 최신 한도는 PC의 새 캡처가 필요해요.</div></div> : <StatusLine v={v} />}
       {detailed && (
         <>
           <LimitChart v={v} />
@@ -140,8 +144,8 @@ export function LimitCard({ v, detailed = false }: { v: LimitView; detailed?: bo
 }
 
 function LimitChart({ v }: { v: LimitView }) {
-  const { colors } = useApp();
-  const now = Date.now();
+  const { colors, snapshotAt } = useApp();
+  const now = snapshotAt ?? Date.now();
   const color = srcColor(colors, v.source);
   const actual = [...v.points];
   if (!v.isReset && actual.length && (v.estimated || actual[actual.length - 1].ts < now)) actual.push({ ts: now, pct: v.nowPct });
@@ -178,7 +182,7 @@ function LimitChart({ v }: { v: LimitView }) {
         </span>
         <span>
           <span className="sw dash" />
-          현재 속도 예측
+          {snapshotAt === undefined ? "현재 속도 예측" : "캡처 당시 속도 예측"}
         </span>
         <span>
           <span className="sw" style={{ background: colors.axis, height: 2, verticalAlign: 3 }} />
@@ -200,7 +204,7 @@ function LimitChart({ v }: { v: LimitView }) {
           />
           <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} stroke={colors.axis} tick={{ fill: colors.muted, fontSize: 11 }} tickFormatter={(x) => `${x}%`} />
           <ReferenceLine y={100} stroke={colors.critical} strokeWidth={1} />
-          <ReferenceLine x={now} stroke={colors.muted} strokeWidth={1} label={{ value: "지금", fill: colors.muted, fontSize: 11, position: "insideTopLeft" }} />
+          <ReferenceLine x={now} stroke={colors.muted} strokeWidth={1} label={{ value: snapshotAt === undefined ? "지금" : "캡처", fill: colors.muted, fontSize: 11, position: "insideTopLeft" }} />
           <Line data={pace} dataKey="pct" stroke={colors.axis} strokeWidth={1} dot={false} isAnimationActive={false} activeDot={false} />
           <Line data={projection} dataKey="pct" stroke={color} strokeWidth={2} strokeDasharray="5 4" dot={false} isAnimationActive={false} />
           <Line data={actual} dataKey="pct" stroke={color} strokeWidth={2} dot={false} isAnimationActive={false} />

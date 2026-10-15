@@ -1,12 +1,17 @@
 {
   "name": "token-view",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "tauri": "tauri"
+    "dev:mobile": "vite --mode mobile",
+    "build:mobile": "tsc -b && vite build --mode mobile",
+    "tauri": "tauri",
+    "test": "vitest run",
+    "test:e2e": "playwright test",
+    "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.3",
@@ -17,14 +22,17 @@
     "@tauri-apps/plugin-updater": "^2.13.3",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
-    "recharts": "^3.10.1"
+    "recharts": "^3.10.1",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@tauri-apps/cli": "^2.12.2",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.1.2",
     "typescript": "^7.0.2",
-    "vite": "^8.3.4"
+    "vite": "^8.3.4",
+    "vitest": "^5.0.4"
   }
 }

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "default",
+  "description": "Phone app window",
+  "windows": ["main"],
+  "permissions": ["core:default", "google-auth:default", "apk-update:default"]
+}

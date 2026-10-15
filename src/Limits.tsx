@@ -7,14 +7,16 @@ import { LimitCard } from "./LimitCard";
 import { Card, TipBox, srcColor, useApp } from "./ui";
 
 export function Limits({ claudeHooked }: { claudeHooked: boolean }) {
-  const { data } = useApp();
-  const views = useMemo(() => buildLimitViews(data), [data]);
+  const { data, snapshotAt } = useApp();
+  const views = useMemo(() => buildLimitViews(data, snapshotAt), [data, snapshotAt]);
   const hasClaude = views.some((v) => v.source === "claude" && v.basis === "live");
   return (
     <div className="page">
       {!hasClaude && (
         <div className="notice">
-          {claudeHooked ? (
+          {snapshotAt !== undefined ? (
+            <>이 캡처에는 Claude의 실제 한도 기록이 없어요. 표시되는 값은 과거 기록에 따른 추정이에요. PC에서 한도 수집을 설정한 뒤 <b>PC에 최신 한도 요청</b>을 사용해 주세요.</>
+          ) : claudeHooked ? (
             <>Claude 한도 수집이 연결돼 있어요. 터미널의 Claude Code를 한 번 사용하면 상태줄이 갱신되면서 실제 5시간/주간 %가 기록됩니다.</>
           ) : (
             <>
@@ -50,10 +52,11 @@ export function Limits({ claudeHooked }: { claudeHooked: boolean }) {
 }
 
 function HistoryChart() {
-  const { data, colors } = useApp();
+  const { data, colors, snapshotAt } = useApp();
   const series = useMemo(() => {
     const m = new Map<string, LimitSnap[]>();
-    const since = Date.now() - 14 * 86_400_000;
+    const now = snapshotAt ?? Date.now();
+    const since = now - 14 * 86_400_000;
     for (const s of data.limits) {
       if (s.ts < since || !s.windowMinutes) continue;
       const k = `${s.source}|${s.win}|${s.windowMinutes}`;
@@ -61,10 +64,10 @@ function HistoryChart() {
       m.get(k)!.push(s);
     }
     // Only window kinds that are still in use.
-    return [...m.entries()].filter(([, v]) => Date.now() - v[v.length - 1].ts < 8 * 86_400_000);
-  }, [data]);
+    return [...m.entries()].filter(([, v]) => now - v[v.length - 1].ts < 8 * 86_400_000);
+  }, [data, snapshotAt]);
   if (!series.length) return null;
-  const now = Date.now();
+  const now = snapshotAt ?? Date.now();
   const start = now - 14 * 86_400_000;
   const ticks: number[] = [];
   const d0 = new Date(start);

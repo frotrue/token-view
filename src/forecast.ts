@@ -138,8 +138,7 @@ function clusterWindows(snaps: LimitSnap[]): LimitSnap[][] {
   return out;
 }
 
-export function buildLimitViews(d: Dashboard): LimitView[] {
-  const now = Date.now();
+export function buildLimitViews(d: Dashboard, now = Date.now()): LimitView[] {
   const groups = new Map<string, LimitSnap[]>();
   for (const s of d.limits) {
     const key = `${s.source}|${s.limitId}|${s.win}|${s.windowMinutes}`;

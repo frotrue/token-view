@@ -1,7 +1,15 @@
 node_modules
 dist
+dist-mobile
 src-tauri/target
 src-tauri/gen
 .dev
 tsconfig.tsbuildinfo
 .claude
+.env
+.env.*
+!.env.example
+!.env.mobile
+playwright-report
+test-results
+coverage

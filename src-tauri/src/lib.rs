@@ -1,4 +1,5 @@
 mod db;
+mod cloud;
 mod export;
 mod live;
 mod pricing;
@@ -26,6 +27,7 @@ struct AppState {
     /// Results of the last live refresh (limits APIs, status pages).
     live: Mutex<Value>,
     last_live: Mutex<i64>,
+    cloud: cloud::CloudSync,
 }
 
 fn err<E: ToString>(e: E) -> String {
@@ -130,8 +132,59 @@ fn get_settings(state: State<AppState>) -> Result<Value, String> {
 
 #[tauri::command]
 fn set_settings(state: State<AppState>, settings: Value) -> Result<(), String> {
+    let _settings_lock = state.cloud.settings_lock();
     let conn = db::open(&state.db_path).map_err(err)?;
-    db::set_setting(&conn, "ui", &settings.to_string()).map_err(err)
+    let previous = cloud::shared_settings(&ui_settings(&conn));
+    db::set_setting(&conn, "ui", &settings.to_string()).map_err(err)?;
+    if previous != cloud::shared_settings(&settings) {
+        state.cloud.settings_changed(&settings)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn cloud_status(state: State<AppState>) -> cloud::DesktopCloudStatus {
+    state.cloud.status()
+}
+
+#[tauri::command]
+async fn cloud_configure(state: State<'_, AppState>, device_name: String, enabled: bool, client_id: String, client_secret: String) -> Result<cloud::DesktopCloudStatus, String> {
+    let cloud = state.cloud.clone();
+    tauri::async_runtime::spawn_blocking(move || cloud.configure(device_name, enabled, client_id, client_secret))
+        .await.map_err(|_| "동기화 작업을 시작할 수 없어요".to_string())?
+}
+
+/// Opens the Google consent page in the browser and waits for its redirect.
+#[tauri::command]
+async fn cloud_sign_in(state: State<'_, AppState>) -> Result<cloud::DesktopCloudStatus, String> {
+    let cloud = state.cloud.clone();
+    tauri::async_runtime::spawn_blocking(move || cloud.sign_in())
+        .await.map_err(|_| "동기화 작업을 시작할 수 없어요".to_string())?
+}
+
+/// Uses a private GitHub repository (fine-grained token) instead of Google Drive.
+#[tauri::command]
+async fn cloud_connect_github(state: State<'_, AppState>, repo: String, token: String) -> Result<cloud::DesktopCloudStatus, String> {
+    let cloud = state.cloud.clone();
+    tauri::async_runtime::spawn_blocking(move || cloud.connect_github(repo, token))
+        .await.map_err(|_| "동기화 작업을 시작할 수 없어요".to_string())?
+}
+
+#[tauri::command]
+fn cloud_cancel_sign_in(state: State<AppState>) {
+    state.cloud.cancel_sign_in();
+}
+
+#[tauri::command]
+async fn cloud_sign_out(state: State<'_, AppState>) -> Result<cloud::DesktopCloudStatus, String> {
+    let cloud = state.cloud.clone();
+    tauri::async_runtime::spawn_blocking(move || cloud.sign_out())
+        .await.map_err(|_| "동기화 작업을 시작할 수 없어요".to_string())?
+}
+
+#[tauri::command]
+fn cloud_sync_now(state: State<AppState>) -> Result<cloud::DesktopCloudStatus, String> {
+    state.cloud.sync_now(&state.trigger.lock().unwrap())
 }
 
 #[tauri::command]
@@ -173,16 +226,34 @@ fn refresh_live(app: &AppHandle, force: bool) {
         }
         *last = now;
     }
-    let outcome = |r: Result<Value, String>| match r {
-        Ok(v) => json!({ "ok": true, "ts": now, "info": v }),
-        Err(e) => json!({ "ok": false, "ts": now, "error": e }),
+    let prev = state.live.lock().unwrap().clone();
+    // Keep the last success and the last failure (for an hour) so a transient
+    // error stays explainable after the next refresh succeeds.
+    let outcome = |key: &str, r: Result<Value, String>| {
+        let p = &prev[key];
+        let mut o = match r {
+            Ok(v) => json!({ "ok": true, "ts": now, "info": v, "lastOk": now }),
+            Err(e) => {
+                let mut o = json!({ "ok": false, "ts": now, "reason": live::failure_reason(&e), "error": e, "lastErrorTs": now });
+                if let Some(t) = p.get("lastOk").and_then(Value::as_i64) {
+                    o["lastOk"] = json!(t);
+                }
+                return o;
+            }
+        };
+        if let Some(t) = p.get("lastErrorTs").and_then(Value::as_i64).filter(|t| now - t < 3_600_000) {
+            let e = if p["ok"] == json!(false) { p.get("error") } else { p.get("lastError") };
+            o["lastErrorTs"] = json!(t);
+            o["lastError"] = e.cloned().unwrap_or(Value::Null);
+        }
+        o
     };
     let claude = if setting_bool(&ui, "claudeApi", false) {
-        outcome(live::claude_usage(&conn).map(|n| json!({ "windows": n })))
+        outcome("claude", live::claude_usage(&conn).map(|n| json!({ "windows": n })))
     } else {
         Value::Null
     };
-    let codex = if setting_bool(&ui, "codexLive", true) { outcome(live::codex_limits(&conn)) } else { Value::Null };
+    let codex = if setting_bool(&ui, "codexLive", true) { outcome("codex", live::codex_limits(&conn)) } else { Value::Null };
     let status = if setting_bool(&ui, "serviceStatus", true) { live::service_status() } else { Value::Null };
     *state.live.lock().unwrap() = json!({ "claude": claude, "codex": codex, "status": status });
 }
@@ -199,10 +270,31 @@ fn start_scanner(app: AppHandle, rx: std::sync::mpsc::Receiver<()>) {
         if let Ok(conn) = db::open(&db_path) {
             let _ = remote::refresh(&conn, false); // offline is fine: keep the last table
         }
-        refresh_live(&app, false);
+        let requested_refresh = state.cloud.take_refresh_request();
+        refresh_live(&app, requested_refresh.is_some());
         let result = scan::run_scan(&db_path, &mut report);
         *state.status.lock().unwrap() = result.clone();
-        let _ = app.emit("data-updated", result);
+        let _ = app.emit("data-updated", result.clone());
+        if result.last_error.is_empty() {
+            if let Some(context) = state.cloud.snapshot_context() {
+                if let Ok(conn) = db::open(&db_path) {
+                    if let Ok(dashboard) = stats::dashboard(&conn) {
+                        let mut live = state.live.lock().unwrap().clone();
+                        if let Some(info) = db::get_setting(&conn, "codex_live").and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
+                            live["codexInfo"] = info;
+                        }
+                        let hooked = statusline::status().get("connected").and_then(Value::as_bool).unwrap_or(false);
+                        state.cloud.publish(context, result.last_scan_ms, dashboard, pricing_info(&conn), ui_settings(&conn), live, hooked, requested_refresh.clone());
+                    } else {
+                        state.cloud.return_refresh_request(requested_refresh);
+                    }
+                } else {
+                    state.cloud.return_refresh_request(requested_refresh);
+                }
+            }
+        } else {
+            state.cloud.return_refresh_request(requested_refresh);
+        }
         let secs = db::open(&db_path)
             .ok()
             .and_then(|c| ui_settings(&c).get("refreshSecs").and_then(|v| v.as_u64()))
@@ -279,12 +371,17 @@ pub fn run() {
             let db_path = dir.join("usage.db");
             db::open(&db_path)?;
             let (tx, rx) = channel();
+            let cloud_app = app.handle().clone();
+            let cloud = cloud::CloudSync::start(db_path.clone(), tx.clone(), std::sync::Arc::new(move |event| {
+                let _ = cloud_app.emit(event, ());
+            }));
             app.manage(AppState {
                 db_path,
                 status: Mutex::new(ScanStatus::default()),
                 trigger: Mutex::new(tx),
                 live: Mutex::new(json!({})),
                 last_live: Mutex::new(0),
+                cloud,
             });
 
             // Started with Windows (autostart passes --minimized): stay in the tray.
@@ -350,7 +447,14 @@ pub fn run() {
             get_live,
             refresh_live_now,
             update_tray,
-            export_data
+            export_data,
+            cloud_status,
+            cloud_configure,
+            cloud_sign_in,
+            cloud_cancel_sign_in,
+            cloud_connect_github,
+            cloud_sign_out,
+            cloud_sync_now
         ])
         .run(tauri::generate_context!())
         .expect("error while running Token View");
@@ -376,6 +480,16 @@ pub fn cli_snapshot(db_path: &std::path::Path) -> Value {
         "get_settings": ui_settings(&conn),
         "get_sources": get_sources(),
     })
+}
+
+/// Sizes of what cloud sync would upload for this database: (json bytes, gzip bytes).
+#[doc(hidden)]
+pub fn cli_cloud_size(db_path: &std::path::Path) -> (usize, usize) {
+    let conn = db::open(db_path).unwrap();
+    let dashboard = stats::dashboard(&conn).unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    let payload = cloud::payload::snapshot("size-check", "PC", now, &dashboard, &pricing_info(&conn), &ui_settings(&conn), &json!({}), false);
+    (payload.to_string().len(), cloud::payload::gzip(&payload).len())
 }
 
 #[doc(hidden)]

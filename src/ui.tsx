@@ -55,6 +55,9 @@ export interface Ctx {
   settings: UiSettings;
   money: Money;
   colors: Colors;
+  /** Browser snapshots are interpreted at capture time, never as a live scan. */
+  snapshotAt?: number;
+  snapshotTimeZone?: string;
 }
 export const AppCtx = createContext<Ctx>(null as unknown as Ctx);
 export const useApp = () => useContext(AppCtx);

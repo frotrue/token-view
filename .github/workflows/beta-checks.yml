@@ -1,0 +1,74 @@
+name: Beta checks
+
+on:
+  # Branch pushes are covered by their pull request; avoid running everything twice.
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beta-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  mobile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # Browser tests run against a build without a Google client (they mock it).
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+      - name: Build the deployable site with the Google client
+        run: npm run build
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mobile-test-results
+          path: |
+            playwright-report
+            test-results
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: token-view-mobile-beta
+          path: dist
+          retention-days: 14
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: npm ci
+      - run: cargo test --locked --all-targets --manifest-path src-tauri/Cargo.toml
+      - name: Build unsigned beta installer (no release publication)
+        shell: bash
+        env:
+          TOKEN_VIEW_GOOGLE_CLIENT_ID: ${{ vars.TOKEN_VIEW_GOOGLE_CLIENT_ID }}
+          TOKEN_VIEW_GOOGLE_CLIENT_SECRET: ${{ secrets.TOKEN_VIEW_GOOGLE_CLIENT_SECRET }}
+        run: npx tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: token-view-windows-beta
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          retention-days: 14
