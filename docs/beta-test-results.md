@@ -1,58 +1,47 @@
-# Mobile cloud beta browser verification
+# Mobile beta verification (Google Drive sync)
 
-Run date: 2026-10-15 (UTC). Browser: installed Chromium 154 through Playwright. Viewports: mobile 390 × 844 and desktop 1440 × 1000. Tests serve the production `dist` with Vite preview, including the generated service worker; they do not use the development snapshot endpoint.
+Run date: 2026-10-15. Host: Windows 11, Node 24, Rust stable. Browser: installed Google Chrome via `PLAYWRIGHT_CHROMIUM_PATH`. Viewports: mobile 390 × 844 and desktop 1440 × 1000. Browser tests serve the production `dist` with Vite preview, including the generated service worker.
 
-## Final result
+## Results
 
-The complete browser run passed **30 of 30 checks** in 36.9 seconds on frozen build `index-CCmuU4YY.js`: 15 workflows at each viewport size. No browser issues remain open from this run.
-
-## Coverage and evidence
-
-| Area | Verification | Result |
+| Suite | Command | Result |
 | --- | --- | --- |
-| Empty onboarding and explicit sample mode | Fresh context has no usage data; the sample banner remains explicit across overview, limits, statistics, and settings | Pass, both viewports |
-| Responsive layout | Body, document, and main content have no horizontal viewport overflow; wide data tables keep their own scroll regions | Pass, both viewports |
-| JSON files | Versioned snapshot import/download round trip; legacy dashboard import; malformed JSON, unsupported version, future capture, and files above 8 MB rejected while preserving valid data | Pass, both viewports |
-| PC timezone | A September 30 UTC capture with October 1 Seoul daily aggregates displays October totals and capture-day statistics | Pass, both viewports |
-| Offline app shell | Installed production service worker reloads the app and imported records with the browser offline; local budget changes survive; shell caches contain no usage JSON or backend responses | Pass, both viewports |
-| Local deletion | Cancel keeps records; confirmed deletion clears IndexedDB and remains cleared after reload | Pass, both viewports |
-| Connection validation | Administrator/service-role keys and HTTP backend URLs are rejected before saving configuration | Pass, both viewports |
-| Cloud sign-in and PC selection | Mock password auth, two separate PC snapshots, no silent combining, selected PC retained on reload | Pass, both viewports; mocked backend |
-| Shared settings | Mock settings read/save RPC synchronizes only the five display/budget fields and survives reload | Pass, both viewports; mocked backend |
-| Stale and pending records | Capture time and fetch time shown separately; old capture labeled; PC request remains pending until the server acknowledges that exact request; transport errors retain the last valid record | Pass, both viewports; mocked backend |
-| PC clock skew and request acknowledgement | A PC capture two minutes ahead cannot fulfil a request; an acknowledgement for an older request is ignored; the matching server acknowledgement clears the pending state | Pass, both viewports; mocked backend |
-| Concurrent settings read/save | A held older settings response cannot overwrite a successful budget save; the saved budget also survives an offline reload | Pass, both viewports; mocked backend |
-| Untrusted remote records | Invalid newly uploaded payload cannot replace or cache over the previous validated snapshot | Pass, both viewports; mocked backend |
-| Offline cloud and sign-out | Cached selected PC reloads offline; sign-out clears both cached PC records, the auth session, and the displayed budget | Pass, both viewports; mocked backend |
-| Sign-out during a response | Real second tab signs out while a new snapshot response is held; releasing the response cannot restore private records | Pass, both viewports; mocked backend |
-| Polling | Fake time verifies 180-second cadence, pauses while hidden/offline, and refreshes on return | Pass, both viewports; mocked backend |
+| Frontend unit | `npm test` | 9 passed |
+| Browser | `npm run test:e2e` | 32 passed (16 workflows × 2 viewports) |
+| Native | `cargo test --locked --all-targets --manifest-path src-tauri/Cargo.toml` | 17 passed |
+| Build | `npm run build`, `cargo build` | passed |
 
-The cloud fixture intercepts every request to `https://beta-test.supabase.co` and supplies authored snapshots, fake auth sessions, settings, refresh RPC responses, and refresh-request acknowledgement records. Fixture generation is independent of the application's demo data. The hidden-state polling test emits a synthetic visibility event because the single headless page remains visible; offline changes use Playwright's actual browser network emulation.
+Measured upload size on a real 4.9 GB-log database: snapshot JSON 594 KB → **94 KB gzip** (`cargo run --release --example cloud_size -- <usage.db>`).
 
-Screenshots were captured and visually inspected for onboarding, overview, limits, statistics, settings, their lower scroll areas, and a stale cloud snapshot with a pending PC request. At 390 px, the fixed bottom navigation, stacked cards, file actions, and budget inputs remain usable. Desktop screenshots show readable multi-column cards and charts. There were no observed layout blockers.
+## Native coverage (`src-tauri/src/cloud/tests.rs`)
 
-## Issues found during QA
+- Loopback sign-in: PKCE S256 challenge, `state` check (a favicon probe without state does not end the flow), code exchange with `code_verifier`, session from `id_token`, credential persisted; cancellation stops waiting.
+- Token handling: Drive scope required (granular consent), refresh keeps refresh token and identity, account change rejected, `invalid_grant` signs out; status never serializes tokens or the client secret.
+- Upload policy against a mock Drive: first sync creates the gzip snapshot in `appDataFolder`; unchanged content only PATCHes `checkedAt`; changed content waits for the 5-minute window unless forced; failed uploads retry with the same capture.
+- Phone requests: expired requests ignored, each nonce served once, the forced upload carries `handled`.
+- Shared settings: remote values applied to local UI settings without touching desktop-only keys; unpushed local edits are durable and pushed to the existing file.
+- Sanitizing: paths, raw errors, provider tokens and unknown fields stripped; windowed series cut at a UTC day boundary so the fingerprint is stable; fingerprint ignores only capture/query timestamps.
 
-- **Fixed and verified:** offline asset cache lookups missed JavaScript/CSS with `Vary: Origin`, leaving a blank app on reload. The worker now reads only its allowlisted static paths from the current shell cache with `ignoreVary`.
-- **Fixed and verified:** initial Supabase session recovery was handled like a cross-tab account change, clearing cached records and the selected PC. Startup recovery now preserves the session's existing selection/cache.
-- **Fixed and verified:** the polling timer's first tick could miss the deadline after sign-in and delay refresh for another interval. It now schedules a timeout from the last attempt's deadline and reschedules on return to an online, visible page.
-- **Fixed and verified:** a future PC clock could make an existing capture look like it fulfilled a newer refresh request. Completion now requires the server's acknowledgement for the exact request.
-- **Fixed and verified:** an older settings read could overwrite a concurrent successful settings save. The completed save invalidates earlier reads before updating the current record and cache.
+## Browser coverage (`tests/e2e/beta.spec.ts`)
 
-An earlier run was discarded because concurrent rebuilds changed asset hashes while the service worker installed. Subsequent runs exposed the issues above; the final complete result used a frozen build and clean browser contexts.
-
-## Reproducing the run
-
-```sh
-npm ci
-npm run build
-npm run test:e2e
-```
-
-The config uses `/usr/bin/chromium` when present. Otherwise install Playwright's browser with `npx playwright install --with-deps chromium`, or set `PLAYWRIGHT_CHROMIUM_PATH` to an installed executable. The tests start Vite preview on loopback port 4173, or reuse an existing preview there. Keep `dist` unchanged until the run finishes.
-
-The HTML report is generated in `playwright-report/`; screenshots, failed-test traces, and contexts are in `test-results/`. These generated directories are ignored by Git.
+| Area | Result |
+| --- | --- |
+| Empty onboarding, explicit sample mode on every tab, no horizontal overflow | Pass |
+| Versioned JSON import/download; malformed, future and oversized files rejected | Pass |
+| Legacy dashboard import; PC timezone daily totals | Pass |
+| Offline app shell with imported data and local budget; no Google responses in the shell cache | Pass |
+| Local deletion with confirmation | Pass |
+| Client id validation (only `*.apps.googleusercontent.com`) | Pass |
+| Google redirect sign-in (implicit flow, `state` verified, fragment removed), PC selection, shared settings to `tv-settings` | Pass; mocked Google |
+| Stale capture during errors; PC request pending until the PC's `handled` matches the nonce | Pass; mocked Google |
+| Unchanged PC advances `checkedAt` → capture time refreshes without a download | Pass; mocked Google |
+| Expired token keeps data and reconnects with `login_hint` | Pass; mocked Google |
+| Delayed old read cannot overwrite a budget save or its offline cache | Pass; mocked Google |
+| Invalid Drive content cannot replace the validated record | Pass; mocked Google |
+| Offline reload from cache; disconnect clears caches and token | Pass; mocked Google |
+| Disconnect in another tab cancels a delayed download | Pass; mocked Google |
+| 180-second polling pauses when hidden/offline | Pass; mocked Google |
 
 ## Verification limits
 
-These tests verify browser behavior against local production assets and mocked cloud APIs. They do not verify a deployed Supabase project, live email/password auth, deployed SQL/RLS isolation between real users, Windows desktop publication/credential storage, PC request execution, Claude/OpenAI provider auth or APIs, physical iOS/Android installation, or Safari rendering.
+Not verified here: a real Google Cloud project, consent screen and publishing status, live Drive API behavior (including appDataFolder sharing between the desktop and web clients of one project), Windows Credential Manager persistence across restarts, physical iOS/Android installation, and Safari rendering.

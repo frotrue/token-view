@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { makeDemoSnapshot } from '../../src/cloud/demo';
-import { parseDashboard, parseSnapshot, sharedSettings, validateConfiguration } from '../../src/cloud/schema';
+import { parseDashboard, parseSnapshot, sharedSettings } from '../../src/cloud/schema';
+import { validClientId } from '../../src/cloud/google';
 
-const keyFor = (role: string) => `eyJhbGciOiJIUzI1NiJ9.${btoa(JSON.stringify({ role }))}.test-signature`;
 describe('untrusted cloud and file data', () => {
   it('reads a full fixture emitted by the native Rust snapshot sanitizer', () => {
     const native = JSON.parse(readFileSync(new URL('../fixtures/native-snapshot.json', import.meta.url), 'utf8'));
@@ -40,15 +40,9 @@ describe('untrusted cloud and file data', () => {
     expect(sharedSettings({ ...settings, monthlyBudget: null }).monthlyBudget).toBeNull();
   });
 });
-describe('public-only backend configuration', () => {
-  it('accepts publishable and legacy anon keys', () => {
-    expect(validateConfiguration('https://example.supabase.co/', 'sb_publishable_abc_123').url).toBe('https://example.supabase.co');
-    expect(validateConfiguration('https://example.supabase.co', keyFor('anon')).anonKey).toBe(keyFor('anon'));
-  });
-  it('rejects privileged keys and URLs carrying credentials, paths, or insecure schemes', () => {
-    for (const key of ['sb_secret_never', keyFor('service_role'), keyFor('authenticated'), 'invalid']) expect(() => validateConfiguration('https://example.supabase.co', key)).toThrow();
-    for (const url of ['http://example.com', 'https://user:password@example.com', 'https://example.com/path', 'https://example.com?token=secret', 'javascript:alert(1)']) expect(() => validateConfiguration(url, keyFor('anon'))).toThrow();
-    expect(() => validateConfiguration('http://localhost:54321', keyFor('anon'))).toThrow();
-    expect(validateConfiguration('http://localhost:54321', keyFor('anon'), true).url).toBe('http://localhost:54321');
+describe('Google OAuth client configuration', () => {
+  it('accepts only Google OAuth client ids', () => {
+    expect(validClientId('1234-abc.apps.googleusercontent.com')).toBe(true);
+    for (const id of ['', 'https://evil.example', 'abc.apps.googleusercontent.com.evil.example', 'a b.apps.googleusercontent.com']) expect(validClientId(id)).toBe(false);
   });
 });

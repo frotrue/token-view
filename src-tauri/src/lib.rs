@@ -148,24 +148,30 @@ fn cloud_status(state: State<AppState>) -> cloud::DesktopCloudStatus {
 }
 
 #[tauri::command]
-async fn cloud_configure(state: State<'_, AppState>, url: String, anon_key: String, device_name: String, enabled: bool) -> Result<cloud::DesktopCloudStatus, String> {
+async fn cloud_configure(state: State<'_, AppState>, device_name: String, enabled: bool, client_id: String, client_secret: String) -> Result<cloud::DesktopCloudStatus, String> {
     let cloud = state.cloud.clone();
-    tauri::async_runtime::spawn_blocking(move || cloud.configure(url, anon_key, device_name, enabled))
-        .await.map_err(|_| "Cloud worker is unavailable".to_string())?
+    tauri::async_runtime::spawn_blocking(move || cloud.configure(device_name, enabled, client_id, client_secret))
+        .await.map_err(|_| "동기화 작업을 시작할 수 없어요".to_string())?
+}
+
+/// Opens the Google consent page in the browser and waits for its redirect.
+#[tauri::command]
+async fn cloud_sign_in(state: State<'_, AppState>) -> Result<cloud::DesktopCloudStatus, String> {
+    let cloud = state.cloud.clone();
+    tauri::async_runtime::spawn_blocking(move || cloud.sign_in())
+        .await.map_err(|_| "동기화 작업을 시작할 수 없어요".to_string())?
 }
 
 #[tauri::command]
-async fn cloud_sign_in(state: State<'_, AppState>, email: String, password: String) -> Result<cloud::DesktopCloudStatus, String> {
-    let cloud = state.cloud.clone();
-    tauri::async_runtime::spawn_blocking(move || cloud.sign_in(email, password))
-        .await.map_err(|_| "Cloud worker is unavailable".to_string())?
+fn cloud_cancel_sign_in(state: State<AppState>) {
+    state.cloud.cancel_sign_in();
 }
 
 #[tauri::command]
 async fn cloud_sign_out(state: State<'_, AppState>) -> Result<cloud::DesktopCloudStatus, String> {
     let cloud = state.cloud.clone();
     tauri::async_runtime::spawn_blocking(move || cloud.sign_out())
-        .await.map_err(|_| "Cloud worker is unavailable".to_string())?
+        .await.map_err(|_| "동기화 작업을 시작할 수 없어요".to_string())?
 }
 
 #[tauri::command]
@@ -419,6 +425,7 @@ pub fn run() {
             cloud_status,
             cloud_configure,
             cloud_sign_in,
+            cloud_cancel_sign_in,
             cloud_sign_out,
             cloud_sync_now
         ])
@@ -446,6 +453,16 @@ pub fn cli_snapshot(db_path: &std::path::Path) -> Value {
         "get_settings": ui_settings(&conn),
         "get_sources": get_sources(),
     })
+}
+
+/// Sizes of what cloud sync would upload for this database: (json bytes, gzip bytes).
+#[doc(hidden)]
+pub fn cli_cloud_size(db_path: &std::path::Path) -> (usize, usize) {
+    let conn = db::open(db_path).unwrap();
+    let dashboard = stats::dashboard(&conn).unwrap();
+    let now = chrono::Utc::now().timestamp_millis();
+    let payload = cloud::payload::snapshot("size-check", "PC", now, &dashboard, &pricing_info(&conn), &ui_settings(&conn), &json!({}), false);
+    (payload.to_string().len(), cloud::payload::gzip(&payload).len())
 }
 
 #[doc(hidden)]

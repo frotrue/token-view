@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
-  PC_A, PC_B, MOCK_URL, cacheRecordCount, expectNoViewportOverflow,
-  importJson, loginCloud, mockCloud, selectTab, snapshotFixture, waitForOfflineShell,
+  CLIENT_ID, DRIVE, EMAIL, PC_A, PC_B, cacheRecordCount, downloadCalls, expectNoViewportOverflow,
+  importJson, listCalls, loginCloud, mockCloud, selectTab, snapshotFixture, useClientId, waitForOfflineShell,
 } from './fixtures';
 
 test('onboarding starts empty; explicit sample mode works across every tab', async ({ page }, testInfo) => {
@@ -108,7 +108,7 @@ test('the built service worker reloads imported data offline and retains local b
     return entries.flat();
   });
   expect(cachedUrls.some((url) => url.endsWith('/index.html'))).toBe(true);
-  expect(cachedUrls.some((url) => /supabase|snapshot|\.json(?:\?|$)/.test(url))).toBe(false);
+  expect(cachedUrls.some((url) => /googleapis|snapshot|\.json(?:\?|$)/.test(url))).toBe(false);
   await expectNoViewportOverflow(page);
 });
 
@@ -127,28 +127,35 @@ test('local data deletion requires confirmation and survives reload', async ({ p
   await expect(page.getByText('누적 총 토큰', { exact: true })).toHaveCount(0);
 });
 
-test('cloud configuration rejects administrator keys and insecure URLs', async ({ page }) => {
+test('Google client id configuration rejects anything but an OAuth client id', async ({ page }) => {
   await page.goto('/');
-  await page.locator('summary').filter({ hasText: '클라우드 연결 설정' }).click();
-  await page.getByLabel('Supabase URL', { exact: true }).fill(MOCK_URL);
-  const privilegedKey = `fixture.${Buffer.from(JSON.stringify({ role: 'service_role' })).toString('base64url')}.fixture`;
-  await page.getByLabel('공개 anon / publishable key', { exact: true }).fill(privilegedKey);
-  await page.getByRole('button', { name: '연결 설정 저장', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('secret/service_role');
-  await page.getByLabel('공개 anon / publishable key', { exact: true }).fill('sb_publishable_fixture');
-  await page.getByLabel('Supabase URL', { exact: true }).fill('http://example.test');
-  await page.getByRole('button', { name: '연결 설정 저장', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('HTTPS 프로젝트 주소');
-  expect(await page.evaluate(() => localStorage.getItem('tv-cloud-config-v1'))).toBeNull();
+  await expect(page.getByText('이 빌드에는 구글 클라이언트 ID가 없어요')).toBeVisible();
+  await expect(page.getByRole('button', { name: '구글 계정으로 연결', exact: true })).toHaveCount(0);
+  await page.getByLabel('클라이언트 ID', { exact: true }).fill('https://evil.example');
+  await page.getByRole('button', { name: '클라이언트 ID 저장', exact: true }).click();
+  await expect(page.locator('.cloud-panel').getByRole('alert')).toContainText('apps.googleusercontent.com');
+  expect(await page.evaluate(() => localStorage.getItem('tv-google-client-id'))).toBeNull();
+  await page.getByLabel('클라이언트 ID', { exact: true }).fill(CLIENT_ID);
+  await page.getByRole('button', { name: '클라이언트 ID 저장', exact: true }).click();
+  await expect(page.getByRole('button', { name: '구글 계정으로 연결', exact: true })).toBeVisible();
 });
 
-test.describe('mocked Supabase client workflows (no live backend verification)', () => {
-  test('password sign-in, independent PC selection and shared display settings', async ({ page }) => {
+test.describe('mocked Google Drive workflows (no live Google project)', () => {
+  test.beforeEach(async ({ page }) => { await useClientId(page); });
+
+  test('Google sign-in, independent PC selection and shared display settings', async ({ page }) => {
     const backend = await mockCloud(page);
     await page.goto('/');
     await loginCloud(page);
+    const auth = backend.calls.find((call) => call.url.startsWith('https://accounts.google.com/'))!;
+    const query = new URL(auth.url).searchParams;
+    expect(query.get('response_type')).toBe('token');
+    expect(query.get('scope')).toContain('auth/drive.appdata');
+    expect(query.get('client_id')).toBe(CLIENT_ID);
+    expect(await page.evaluate(() => location.hash)).toBe('');
     await expect(page.getByText('$12.50', { exact: true }).first()).toBeVisible();
     await selectTab(page, '설정');
+    await expect(page.locator('.cloud-panel')).toContainText(EMAIL);
     await page.getByLabel('보고 있는 PC', { exact: true }).selectOption(PC_B);
     await selectTab(page, '개요');
     await expect(page.getByRole('region', { name: '데이터 기준 시각' })).toContainText('QA 보조 PC');
@@ -161,8 +168,8 @@ test.describe('mocked Supabase client workflows (no live backend verification)',
     await page.getByRole('button', { name: '저장', exact: true }).click();
     await expect(page.getByRole('status')).toContainText('설정을 저장했어요');
     expect(backend.settings).toEqual({ currency: 'KRW', krwRate: 1500, monthlyBudget: 456, budgetClaude: 200, budgetCodex: 100 });
-    const saved = backend.calls.find((call) => call.path.endsWith('/save_user_settings'))!;
-    expect(Object.keys((saved.body as { p_settings: object }).p_settings).sort()).toEqual(['budgetClaude', 'budgetCodex', 'currency', 'krwRate', 'monthlyBudget']);
+    const saved = backend.calls.find((call) => (call.body as { appProperties?: { tv?: string } } | null)?.appProperties?.tv === 'settings')!;
+    expect(Object.keys((saved.body as { appProperties: object }).appProperties).sort()).toEqual(['budgetClaude', 'budgetCodex', 'currency', 'krwRate', 'monthlyBudget', 'rev', 'tv']);
     await page.reload();
     await expect(page.getByRole('region', { name: '데이터 기준 시각' })).toContainText('QA 보조 PC');
     await selectTab(page, '설정');
@@ -172,7 +179,7 @@ test.describe('mocked Supabase client workflows (no live backend verification)',
     await expectNoViewportOverflow(page);
   });
 
-  test('stale capture stays visible during errors; PC request remains pending until server acknowledgement', async ({ page }, testInfo) => {
+  test('stale capture stays visible during errors; a PC request stays pending until the PC marks it handled', async ({ page }, testInfo) => {
     const backend = await mockCloud(page);
     await page.goto('/');
     await loginCloud(page);
@@ -182,60 +189,78 @@ test.describe('mocked Supabase client workflows (no live backend verification)',
     await expect(banner).toContainText('이 기기에서 가져옴');
     await banner.getByRole('button', { name: 'PC에 최신 한도 요청', exact: true }).click();
     await expect(banner.getByRole('status')).toContainText('PC가 실행 중이고 온라인이면');
-    expect(backend.calls.find((call) => call.path.endsWith('/request_refresh'))?.body).toEqual({ p_device_id: PC_A });
+    const request = backend.requests.get(`tv-request-${PC_A}`)!;
+    expect(request.tv).toBe('request');
+    expect(request.nonce).toMatch(/^[A-Za-z0-9_-]{16,64}$/);
     await page.screenshot({ path: testInfo.outputPath('cloud-stale-pending.png'), fullPage: true });
-    backend.failSnapshots = true;
+    backend.failList = true;
     await page.getByRole('button', { name: '가져오기', exact: true }).click();
-    await expect(banner.getByRole('alert')).toContainText('클라우드 데이터를 가져오지 못했어요');
+    await expect(banner.getByRole('alert')).toContainText('구글 드라이브에서 기록을 가져오지 못했어요');
     await expect(page.getByText('$12.50', { exact: true }).first()).toBeVisible();
     await expect(banner.getByRole('status')).toBeVisible();
-    backend.failSnapshots = false;
-    backend.snapshots.set(PC_A, snapshotFixture({ now: backend.requestedAt!, cost: 19.5 }));
+    backend.failList = false;
+    // A new capture that has not served this request leaves it pending.
+    backend.devices.set(PC_A, { snapshot: snapshotFixture({ now: Date.now(), cost: 19.5 }), handled: 'some-older-request' });
     await page.getByRole('button', { name: '가져오기', exact: true }).click();
     await expect(page.getByText('$19.50', { exact: true }).first()).toBeVisible();
     await expect(banner.getByRole('status')).toBeVisible();
-    backend.handledAt = backend.requestedAt;
+    backend.devices.get(PC_A)!.handled = request.nonce;
     await page.getByRole('button', { name: '가져오기', exact: true }).click();
     await expect(banner.getByRole('status')).toHaveCount(0);
     await expect(banner).not.toContainText('오래된 캡처예요');
     expect(backend.unexpected).toEqual([]);
   });
 
-  test('a PC clock ahead of the viewer cannot fulfil a refresh request; only the matching server acknowledgement can', async ({ page }) => {
-    const now = Date.now();
-    const backend = await mockCloud(page, now);
-    backend.snapshots.set(PC_A, snapshotFixture({ now: now + 120_000 }));
+  test('an unchanged PC only advances its check time, which refreshes the capture without a download', async ({ page }) => {
+    const backend = await mockCloud(page);
     await page.goto('/');
     await loginCloud(page);
     const banner = page.getByRole('region', { name: '데이터 기준 시각' });
-    await banner.getByRole('button', { name: 'PC에 최신 한도 요청', exact: true }).click();
-    await expect(banner.getByRole('status')).toBeVisible();
-    const requestedAt = backend.requestedAt!;
-    // An acknowledgement of a different request cannot clear the newer pending one.
-    backend.requestedAt = requestedAt - 60_000;
-    backend.handledAt = requestedAt;
+    await expect(banner).toContainText('오래된 캡처예요');
+    const downloads = downloadCalls(backend);
+    backend.devices.get(PC_A)!.checkedAt = Date.now() - 30_000;
     await page.getByRole('button', { name: '가져오기', exact: true }).click();
-    await expect(banner.getByRole('status')).toBeVisible();
-    backend.requestedAt = requestedAt;
+    await expect(banner).not.toContainText('오래된 캡처예요');
+    expect(downloadCalls(backend)).toBe(downloads);
+    await expect(page.getByText('$12.50', { exact: true }).first()).toBeVisible();
+  });
+
+  test('an expired Google token keeps the data and offers a one-tap reconnect', async ({ page }) => {
+    const backend = await mockCloud(page);
+    await page.goto('/');
+    await loginCloud(page);
+    backend.unauthorized = true;
     await page.getByRole('button', { name: '가져오기', exact: true }).click();
-    await expect(banner.getByRole('status')).toHaveCount(0);
+    const banner = page.getByRole('region', { name: '데이터 기준 시각' });
+    await expect(banner.getByRole('button', { name: '구글 다시 연결', exact: true })).toBeVisible();
+    await expect(page.getByText('$12.50', { exact: true }).first()).toBeVisible();
+    backend.unauthorized = false;
+    await banner.getByRole('button', { name: '구글 다시 연결', exact: true }).click();
+    await expect(banner.getByRole('button', { name: 'PC에 최신 한도 요청', exact: true })).toBeVisible();
+    const reauth = backend.calls.filter((call) => call.url.startsWith('https://accounts.google.com/')).at(-1)!;
+    expect(new URL(reauth.url).searchParams.get('login_hint')).toBe(EMAIL);
     expect(backend.unexpected).toEqual([]);
   });
 
-  test('a delayed old settings read cannot overwrite a successful budget save or its offline cache', async ({ page, context }) => {
+  test('a delayed old read cannot overwrite a successful budget save or its offline cache', async ({ page, context }) => {
     const backend = await mockCloud(page);
     await page.goto('/');
     await waitForOfflineShell(page);
     await loginCloud(page);
-    const oldSettings = { ...backend.settings };
+    const oldSettings = { ...backend.settings! };
     let readHeld = false;
     let releaseRead!: () => void;
     const gate = new Promise<void>((resolve) => { releaseRead = resolve; });
-    await page.route(`${MOCK_URL}/rest/v1/user_settings?**`, async (route) => {
+    await page.route(`${DRIVE}/drive/v3/files?spaces=**`, async (route) => {
       if (!readHeld) {
         readHeld = true;
+        const props: Record<string, string> = { tv: 'settings', rev: '0' };
+        for (const [k, v] of Object.entries(oldSettings)) props[k] = v === null ? '' : String(v);
         await gate;
-        await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ settings: oldSettings }) });
+        await route.fulfill({ headers: { 'access-control-allow-origin': '*' }, contentType: 'application/json', body: JSON.stringify({ files: [
+          { id: `snap-${PC_A}`, name: `tv-snapshot-${PC_A}`, modifiedTime: '', appProperties: { tv: 'snapshot', deviceId: PC_A, deviceName: 'QA 작업 PC', capturedAt: String(backend.devices.get(PC_A)!.snapshot.capturedAt) } },
+          { id: 'settings-file', name: 'tv-settings', modifiedTime: '', appProperties: props },
+        ] }) });
       } else await route.fallback();
     });
     await page.getByRole('button', { name: '가져오기', exact: true }).click();
@@ -244,11 +269,11 @@ test.describe('mocked Supabase client workflows (no live backend verification)',
     await page.getByLabel('월 예산 · 전체 (USD)', { exact: true }).fill('456');
     await page.getByRole('button', { name: '저장', exact: true }).click();
     await expect(page.getByRole('status')).toContainText('설정을 저장했어요');
-    expect(backend.settings.monthlyBudget).toBe(456);
-    const lateRead = page.waitForResponse((response) => response.url().startsWith(`${MOCK_URL}/rest/v1/user_settings?`));
+    expect(backend.settings!.monthlyBudget).toBe(456);
+    const lateRead = page.waitForResponse((response) => response.url().includes('/drive/v3/files?spaces='));
     releaseRead();
     await lateRead;
-    await expect(page.locator('.cloud-panel').getByRole('button', { name: '클라우드 새로고침', exact: true })).toBeEnabled();
+    await expect(page.locator('.cloud-panel').getByRole('button', { name: '드라이브 새로고침', exact: true })).toBeEnabled();
     await expect(page.getByLabel('월 예산 · 전체 (USD)', { exact: true })).toHaveValue('456');
     await context.setOffline(true);
     await page.reload();
@@ -258,20 +283,20 @@ test.describe('mocked Supabase client workflows (no live backend verification)',
     expect(backend.unexpected).toEqual([]);
   });
 
-  test('invalid cloud payload cannot replace the previous validated record', async ({ page }) => {
+  test('invalid Drive content cannot replace the previous validated record', async ({ page }) => {
     const backend = await mockCloud(page);
     await page.goto('/');
     await loginCloud(page);
     backend.invalidSnapshot = { schemaVersion: 1, device: { id: PC_A, name: 'broken' } };
-    // A new remote capture must be downloaded; unchanged captures use validated cache.
-    backend.snapshots.set(PC_A, snapshotFixture({ now: Date.now() }));
+    // A new capture must be downloaded; an unchanged capture reuses the validated copy.
+    backend.devices.set(PC_A, { snapshot: snapshotFixture({ now: Date.now() }) });
     await page.getByRole('button', { name: '가져오기', exact: true }).click();
     await expect(page.getByRole('region', { name: '데이터 기준 시각' }).getByRole('alert')).toContainText('지원하지 않거나 손상된 데이터');
     await expect(page.getByText('$12.50', { exact: true }).first()).toBeVisible();
     await expect.poll(() => cacheRecordCount(page)).toBe(1);
   });
 
-  test('cloud cache works on offline reload; sign-out clears both PC caches and auth session', async ({ page, context }) => {
+  test('Drive cache works on offline reload; disconnecting clears both PC caches and the token', async ({ page, context }) => {
     const backend = await mockCloud(page);
     await page.goto('/');
     await waitForOfflineShell(page);
@@ -284,41 +309,38 @@ test.describe('mocked Supabase client workflows (no live backend verification)',
     await expect(page.getByRole('region', { name: '데이터 기준 시각' })).toContainText('오프라인 · 저장된 기록');
     await expect(page.getByText('$81.75', { exact: true }).first()).toBeVisible();
     await selectTab(page, '설정');
-    await page.getByRole('button', { name: '로그아웃', exact: true }).click();
+    await page.getByRole('button', { name: '연결 해제', exact: true }).click();
     await expect.poll(() => cacheRecordCount(page)).toBe(0);
     await expect(page.getByLabel('월 예산 · 전체 (USD)', { exact: true })).toHaveValue('');
-    expect(await page.evaluate((url) => localStorage.getItem(`tv-auth:${url}`), MOCK_URL)).toBeNull();
+    expect(await page.evaluate(() => [localStorage.getItem('tv-google-token-v1'), localStorage.getItem('tv-google-account-v1')])).toEqual([null, null]);
     await page.reload();
     await expect(page.getByRole('heading', { level: 1 })).toContainText('손안에서');
     await expect(page.getByText('누적 총 토큰', { exact: true })).toHaveCount(0);
     expect(backend.unexpected).toEqual([]);
   });
 
-  test('sign-out in another tab cancels a delayed snapshot response without restoring private records', async ({ page, context }) => {
-    const backend = await mockCloud(page);
+  test('disconnecting in another tab cancels a delayed download without restoring private records', async ({ page, context }) => {
+    const backend = await mockCloud(context);
+    await useClientId(context);
     await page.goto('/');
     await loginCloud(page);
     const secondTab = await context.newPage();
-    await mockCloud(secondTab);
     await secondTab.goto('/');
     await expect(secondTab.getByText('API 환산 누적 비용', { exact: true })).toBeVisible();
-    backend.snapshots.set(PC_A, snapshotFixture({ now: Date.now(), cost: 19.5 }));
+    backend.devices.set(PC_A, { snapshot: snapshotFixture({ now: Date.now(), cost: 19.5 }) });
     let responseHeld = false;
     let releaseResponse!: () => void;
     const gate = new Promise<void>((resolve) => { releaseResponse = resolve; });
-    await page.route(`${MOCK_URL}/rest/v1/snapshots?**`, async (route) => {
-      if (new URL(route.request().url()).searchParams.get('select') === 'payload' && !responseHeld) {
-        responseHeld = true;
-        await gate;
-      }
+    await page.route(`${DRIVE}/drive/v3/files/snap-**`, async (route) => {
+      if (!responseHeld) { responseHeld = true; await gate; }
       await route.fallback();
     });
     await page.getByRole('button', { name: '가져오기', exact: true }).click();
     await expect.poll(() => responseHeld).toBe(true);
     await selectTab(secondTab, '설정');
-    await secondTab.getByRole('button', { name: '로그아웃', exact: true }).click();
+    await secondTab.getByRole('button', { name: '연결 해제', exact: true }).click();
     await expect(page.getByRole('heading', { level: 1 })).toContainText('손안에서');
-    const lateResponse = page.waitForResponse((response) => response.url().startsWith(`${MOCK_URL}/rest/v1/snapshots?`) && new URL(response.url()).searchParams.get('select') === 'payload');
+    const lateResponse = page.waitForResponse((response) => response.url().includes('alt=media'));
     releaseResponse();
     await lateResponse;
     await expect(page.getByRole('button', { name: '가져오기', exact: true })).toBeDisabled();
@@ -336,29 +358,29 @@ test.describe('mocked Supabase client workflows (no live backend verification)',
     const backend = await mockCloud(page, now);
     await page.goto('/');
     await loginCloud(page);
-    const listCalls = () => backend.calls.filter((call) => call.path === '/rest/v1/snapshots' && call.query.includes('device_name')).length;
-    const baseline = listCalls();
+    const calls = () => listCalls(backend);
+    const baseline = calls();
     await page.clock.runFor(179_000);
-    expect(listCalls()).toBe(baseline);
+    expect(calls()).toBe(baseline);
     await page.clock.runFor(1000);
-    await expect.poll(listCalls).toBe(baseline + 1);
+    await expect.poll(calls).toBe(baseline + 1);
     // Chromium's single page remains visible in headless mode, so emit the browser
     // visibility event with a synthetic hidden state while advancing actual timers.
     await page.evaluate(() => Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' }));
-    const hiddenBaseline = listCalls();
+    const hiddenBaseline = calls();
     await page.clock.runFor(180_000);
-    expect(listCalls()).toBe(hiddenBaseline);
+    expect(calls()).toBe(hiddenBaseline);
     await page.evaluate(() => {
       Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' });
       document.dispatchEvent(new Event('visibilitychange'));
     });
-    await expect.poll(listCalls).toBe(hiddenBaseline + 1);
+    await expect.poll(calls).toBe(hiddenBaseline + 1);
     await context.setOffline(true);
-    const offlineBaseline = listCalls();
+    const offlineBaseline = calls();
     await page.clock.runFor(180_000);
-    expect(listCalls()).toBe(offlineBaseline);
+    expect(calls()).toBe(offlineBaseline);
     await context.setOffline(false);
-    await expect.poll(listCalls).toBe(offlineBaseline + 1);
+    await expect.poll(calls).toBe(offlineBaseline + 1);
     expect(backend.unexpected).toEqual([]);
   });
 });

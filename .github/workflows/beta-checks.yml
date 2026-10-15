@@ -1,8 +1,9 @@
 name: Beta checks
 
 on:
+  # Branch pushes are covered by their pull request; avoid running everything twice.
   push:
-    branches: [main, 'beta/**']
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -25,6 +26,8 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v4
@@ -40,12 +43,6 @@ jobs:
           name: token-view-mobile-beta
           path: dist
           retention-days: 14
-
-  database:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - run: bash supabase/tests/run-postgres-tests.sh
 
   windows:
     runs-on: windows-latest
@@ -63,6 +60,9 @@ jobs:
       - run: cargo test --locked --all-targets --manifest-path src-tauri/Cargo.toml
       - name: Build unsigned beta installer (no release publication)
         shell: bash
+        env:
+          TOKEN_VIEW_GOOGLE_CLIENT_ID: ${{ vars.TOKEN_VIEW_GOOGLE_CLIENT_ID }}
+          TOKEN_VIEW_GOOGLE_CLIENT_SECRET: ${{ secrets.TOKEN_VIEW_GOOGLE_CLIENT_SECRET }}
         run: npx tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
       - uses: actions/upload-artifact@v4
         with:

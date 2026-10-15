@@ -34,6 +34,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Public "desktop app" OAuth client for Google Drive sync (optional; empty = disabled).
+          TOKEN_VIEW_GOOGLE_CLIENT_ID: ${{ vars.TOKEN_VIEW_GOOGLE_CLIENT_ID }}
+          TOKEN_VIEW_GOOGLE_CLIENT_SECRET: ${{ secrets.TOKEN_VIEW_GOOGLE_CLIENT_SECRET }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: Token View ${{ github.ref_name }}

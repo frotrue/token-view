@@ -36,7 +36,7 @@ The website SIWC guide requires a provisioned client and backend, describes iden
 ## Implementation implications
 
 - Follow [the mobile cloud beta contract](beta-contract.md): provider credentials remain native; cloud payloads contain only allowlisted usage/limit snapshots and collection timestamps.
-- Keep provider authentication separate from Token View's Supabase account. Signing into cloud sync does not sign into Claude or ChatGPT.
+- Keep provider authentication separate from Token View's Google Drive sync account. Connecting Google Drive does not sign into Claude or ChatGPT.
 - Show the PC's capture time and stale/offline state. A mobile “request PC refresh” action depends on the collector being online; cloud polling alone cannot make provider readings current.
 - Preserve nullable/missing limits and separate measured values from existing estimates. Retain Codex `limitId` buckets and returned window durations; do not assume every plan has both a five-hour and weekly limit.
 - A future direct connection needs verified client eligibility, an appropriate quota-read grant/API, an approved callback/runtime model, credential handling, and provider behavior tested with an explicitly authorized test account. Until then, no direct-provider feature flag should be presented as usable.

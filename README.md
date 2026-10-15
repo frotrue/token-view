@@ -1,6 +1,6 @@
 # Token View
 
-Claude Code와 Codex의 토큰 사용량, API 환산 비용, 사용 한도를 한 화면에서 보는 Windows 앱입니다. 지금 속도로 쓰면 한도와 예산이 언제 소진되는지도 예측합니다. **0.3.0 베타**에서는 선택적으로 클라우드에 동기화하고 모바일 웹앱에서 같은 기록을 볼 수 있습니다.
+Claude Code와 Codex의 토큰 사용량, API 환산 비용, 사용 한도를 한 화면에서 보는 Windows 앱입니다. 지금 속도로 쓰면 한도와 예산이 언제 소진되는지도 예측합니다. **0.3.0 베타**에서는 선택적으로 내 구글 드라이브에 동기화하고 모바일 웹앱에서 같은 기록을 볼 수 있습니다.
 
 - **개요:** 누적 토큰과 비용, 이번 달 월말 예상, 한도 카드(소진 예상 시각), 일별 사용량(이번 달 남은 기간 예측 포함)
 - **한도 · 예측:** 5시간·주간 한도의 현재 사용률, 현재 속도 기준 예측선, 지난 윈도우 기록
@@ -12,15 +12,17 @@ Claude Code와 Codex의 토큰 사용량, API 환산 비용, 사용 한도를 �
 - **예측 범위:** 내 최근 사용 패턴(시간대별 변동)으로 계산한 10~90% 범위를 함께 표시
 - **모바일 베타:** 홈 화면에 설치, PC별 기록 선택, 화면을 보고 있을 때 3분마다 갱신, 오프라인 기록 보기, JSON 가져오기·다운로드, 예산·환율 공유
 
-## 모바일 · 클라우드 베타
+## 모바일 · 구글 드라이브 베타
 
-PC가 수집한 통계와 한도를 본인 계정의 Supabase에 저장하고 휴대폰에서 읽습니다. 클라우드 동기화는 기본으로 꺼져 있습니다. PC가 꺼져 있으면 마지막 기록을 계속 볼 수 있습니다. 모바일의 **PC에 최신 한도 요청**은 실행 중인 PC에 수집을 요청하며, 제공자에 직접 로그인하는 기능은 포함하지 않습니다. 한도의 실제 마지막 확인 시각을 별도로 표시합니다.
+PC가 수집한 통계와 한도를 **각자의 구글 드라이브**(숨겨진 앱 전용 공간)에 올리고 휴대폰에서 같은 구글 계정으로 읽습니다. 서버가 없고, 앱은 드라이브의 다른 파일에 접근하지 않습니다. 구글 계정을 연결하기 전에는 아무것도 올리지 않습니다. PC가 꺼져 있으면 마지막 기록을 계속 볼 수 있습니다. 모바일의 **PC에 최신 한도 요청**은 실행 중인 PC에 수집을 요청합니다.
 
-1. [클라우드 설정 안내](docs/cloud-setup.md)에 따라 Supabase 테이블과 베타 계정을 만듭니다.
-2. PC 설정에서 프로젝트 URL·공개 키를 입력하고 로그인한 뒤 동기화를 켭니다.
-3. 모바일 사이트에서 같은 계정으로 로그인합니다. 설정의 설치 안내에 따라 홈 화면에 추가할 수 있습니다.
+- **업로드 규칙:** 내용이 바뀌었을 때만 최대 5분마다 압축해서 올립니다(약 100KB). 변화가 없으면 확인 시각만 갱신하므로 사용자당 하루 수 MB 수준입니다.
 
-클라우드 없이 먼저 확인하려면 `npm ci && npm run dev`를 실행하고 **샘플 데이터 보기** 또는 **JSON 가져오기**를 선택하세요. 기존 PC 앱의 대시보드 JSON 내보내기도 읽을 수 있습니다. 샘플은 실제 사용량과 구별해 표시됩니다.
+1. 배포자가 [구글 드라이브 설정 안내](docs/cloud-setup.md)에 따라 Google Cloud 프로젝트와 OAuth 클라이언트를 한 번 만듭니다.
+2. PC 설정 → **휴대폰 연결 · 구글 드라이브**에서 **구글 계정으로 연결**을 누릅니다.
+3. 모바일 사이트에서 같은 구글 계정으로 연결합니다. 설정의 설치 안내에 따라 홈 화면에 추가할 수 있습니다.
+
+구글 연결 없이 먼저 확인하려면 `npm ci && npm run dev`를 실행하고 **샘플 데이터 보기** 또는 **JSON 가져오기**를 선택하세요. 기존 PC 앱의 대시보드 JSON 내보내기도 읽을 수 있습니다. 샘플은 실제 사용량과 구별해 표시됩니다.
 
 [베타 빌드·배포 안내](docs/beta-release.md) · [한도 직접 조회 검증](docs/provider-auth-feasibility.md) · [데이터 계약](docs/beta-contract.md)
 
@@ -42,8 +44,8 @@ PC가 수집한 통계와 한도를 본인 계정의 Supabase에 저장하고 �
 | 앱 DB | `%APPDATA%\com.tokenview.monitor\usage.db` |
 
 - 로그는 증분으로 읽습니다. 원본 로그가 지워져도 DB에 남은 기록은 유지돼요.
-- 클라우드 동기화를 끄면 사용 기록은 PC 안에서만 처리돼요. 기본 외부 연결은 업데이트 확인과 단가표 받기(GitHub), 서비스 상태 확인(status.claude.com, status.openai.com)입니다. Claude 사용량 API를 켜면 Anthropic 연결이 추가돼요.
-- 클라우드 동기화를 켜면 화면용 사용량·한도·단가·표시 설정을 지정한 Supabase에 전송합니다. 원본 대화, 로그 파일, 제공자 로그인 토큰은 업로드하지 않습니다. 프로젝트는 폴더 이름과 구분용 해시로, 세션 ID는 해시로 전송합니다. PC의 클라우드 로그인 세션은 Windows 자격 증명 저장소, 모바일 세션은 브라우저 저장소에 보관합니다. 모바일 로그아웃은 개인 데이터 캐시를 지웁니다.
+- 구글 드라이브를 연결하지 않으면 사용 기록은 PC 안에서만 처리돼요. 기본 외부 연결은 업데이트 확인과 단가표 받기(GitHub), 서비스 상태 확인(status.claude.com, status.openai.com)입니다. Claude 사용량 API를 켜면 Anthropic 연결이 추가돼요.
+- 구글 드라이브를 연결하면 화면용 사용량·한도·단가·표시 설정을 내 드라이브의 앱 전용 숨김 공간에 올립니다. 원본 대화, 로그 파일, 제공자 로그인 토큰은 업로드하지 않습니다. 프로젝트는 폴더 이름과 구분용 해시로, 세션 ID는 해시로 전송합니다. PC의 구글 로그인은 Windows 자격 증명 저장소, 모바일은 브라우저 저장소(1시간짜리 토큰)에 보관합니다. 연결 해제는 토큰을 철회하고 휴대폰의 개인 데이터 캐시를 지웁니다.
 
 ### 실시간 한도 조회
 
@@ -75,9 +77,9 @@ npx tauri dev
   ```bash
   cd src-tauri && cargo run --example pricing_json > ../pricing.json
   ```
-- **검증:** `npm test`, `npm run build`, `npm run test:e2e`, `cargo test --locked --all-targets --manifest-path src-tauri/Cargo.toml`, `bash supabase/tests/run-postgres-tests.sh`.
-- **베타 CI:** `Beta checks`가 웹 테스트·SQL 보안 테스트·Windows 테스트를 실행하고 모바일 정적 파일과 서명하지 않은 Windows 설치 프로그램을 아티팩트로 만듭니다. GitHub Release를 게시하지 않습니다.
-- **릴리스:** `package.json`과 `src-tauri/Cargo.toml`의 버전을 맞추고 잠금 파일을 갱신한 뒤 `vX.Y.Z` 태그를 푸시하면 GitHub Actions가 빌드, 서명, 릴리스까지 처리해요. `v0.3.0-beta.1`처럼 하이픈이 있는 태그는 사전 릴리스로 게시됩니다. 저장소 Secrets에 `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`가 있어야 합니다.
+- **검증:** `npm test`, `npm run build`, `npm run test:e2e`, `cargo test --locked --all-targets --manifest-path src-tauri/Cargo.toml`.
+- **베타 CI:** `Beta checks`가 웹 테스트와 Windows 테스트를 실행하고 모바일 정적 파일과 서명하지 않은 Windows 설치 프로그램을 아티팩트로 만듭니다. GitHub Release를 게시하지 않습니다.
+- **릴리스:** `package.json`과 `src-tauri/Cargo.toml`의 버전을 맞추고 잠금 파일을 갱신한 뒤 `vX.Y.Z` 태그를 푸시하면 GitHub Actions가 빌드, 서명, 릴리스까지 처리해요. `v0.3.0-beta.1`처럼 하이픈이 있는 태그는 사전 릴리스로 게시됩니다. 저장소 Secrets에 `TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`가 있어야 합니다. 구글 드라이브 동기화를 포함하려면 [설정 안내](docs/cloud-setup.md#4-빌드에-클라이언트-넣기)의 클라이언트 값도 등록하세요.
 - **실제 로컬 기록으로 브라우저 확인:** 다음 명령으로 만든 JSON을 모바일 화면의 **JSON 가져오기**에서 선택하세요. 이 파일은 로컬 개발용으로 원본 경로가 포함될 수 있으므로 저장소에 커밋하지 마세요.
   ```bash
   cd src-tauri && cargo run --release --example snapshot -- <임시 db> ../.dev/snapshot.json

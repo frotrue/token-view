@@ -67,23 +67,3 @@ export function parseDashboard(value: unknown): Dashboard {
   if (!parsed.success) throw new Error('대시보드 JSON 형식이 올바르지 않아요.');
   return parsed.data;
 }
-
-export function validateConfiguration(url: string, key: string, development = false) {
-  let parsed: URL;
-  try { parsed = new URL(url.trim()); } catch { throw new Error('올바른 Supabase 프로젝트 URL을 입력해 주세요.'); }
-  const local = development && ['localhost', '127.0.0.1', '[::1]'].includes(parsed.hostname);
-  if ((parsed.protocol !== 'https:' && !(local && parsed.protocol === 'http:')) || parsed.username || parsed.password || parsed.search || parsed.hash || !['', '/'].includes(parsed.pathname)) {
-    throw new Error('Supabase의 HTTPS 프로젝트 주소만 사용할 수 있어요.');
-  }
-  const cleanKey = key.trim();
-  let publicKey = /^sb_publishable_[A-Za-z0-9_-]+$/.test(cleanKey);
-  if (cleanKey.split('.').length === 3) {
-    try {
-      const encoded = cleanKey.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-      const body = JSON.parse(atob(encoded.padEnd(Math.ceil(encoded.length / 4) * 4, '=')));
-      publicKey = body.role === 'anon';
-    } catch { publicKey = false; }
-  }
-  if (!publicKey) throw new Error('공개용 publishable 또는 anon 키를 입력해 주세요. secret/service_role 키는 사용할 수 없어요.');
-  return { url: parsed.origin, anonKey: cleanKey };
-}

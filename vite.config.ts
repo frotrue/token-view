@@ -17,7 +17,7 @@ const devSnapshot = (): Plugin => ({
   },
 });
 
-// A versioned, same-origin app shell; never cache Supabase responses or usage JSON.
+// A versioned, same-origin app shell; never cache Google API responses or usage JSON.
 const offlineShell = (): Plugin => ({
   name: "token-view-offline-shell",
   apply: "build",
