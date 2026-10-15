@@ -17,7 +17,10 @@ android = pathlib.Path("src-tauri/gen/android")
 gradle = android / "app" / "build.gradle.kts"
 s = gradle.read_text()
 if "signingConfigs" not in s:
-    s = "import java.io.FileInputStream\n" + s
+    # Inside `android { }`, `java` names the Java extension, so import the types.
+    for imp in ("import java.io.FileInputStream", "import java.util.Properties"):
+        if imp not in s:
+            s = imp + "\n" + s
     s = s.replace(
         "android {",
         """android {
