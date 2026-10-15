@@ -51,8 +51,8 @@ jobs:
       - name: Generate the Android project
         working-directory: mobile
         run: |
-          npx tauri android init --ci
-          npx tauri icon src-tauri/icons/icon.png
+          npm run tauri -- android init --ci
+          npm run tauri -- icon src-tauri/icons/icon.png
 
       - name: Release signing
         working-directory: mobile
@@ -65,7 +65,7 @@ jobs:
 
       - name: Build APK
         working-directory: mobile
-        run: npx tauri android build --apk --target aarch64 --ci
+        run: npm run tauri -- android build --apk --target aarch64 --ci
 
       - name: Collect APK
         id: apk

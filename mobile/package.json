@@ -1,0 +1,8 @@
+{
+  "name": "token-view-mobile",
+  "private": true,
+  "description": "Gradle calls `npm run tauri` from inside mobile/; this keeps the Tauri CLI on the phone app (the CLI itself comes from the root node_modules).",
+  "scripts": {
+    "tauri": "tauri"
+  }
+}
