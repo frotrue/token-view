@@ -5,7 +5,9 @@ import type { CloudDevice, CloudSnapshot, CloudViewState, DesktopCloudStatus, De
 import { MAX_SNAPSHOT_BYTES, parseDashboard, parseSnapshot, sharedSettings } from './cloud/schema';
 import { clearCache, readCache, writeCache } from './cloud/cache';
 import { emptyPricing, makeDemoSnapshot } from './cloud/demo';
+import * as github from './cloud/github';
 import * as google from './cloud/google';
+import { AuthExpired, type RemoteFile } from './cloud/remote';
 
 export type { CloudViewState, CloudSnapshot } from './cloud/types';
 export const isDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -17,11 +19,13 @@ const SNAPSHOT_PREFIX = 'tv-snapshot-';
 const SETTINGS_NAME = 'tv-settings';
 const SHARED_KEYS = ['currency', 'krwRate', 'monthlyBudget', 'budgetClaude', 'budgetCodex'] as const;
 const requestName = (deviceId: string) => `tv-request-${deviceId}`;
+/** A remembered connection: a Google account, or a private GitHub repository. */
+interface Account extends google.GoogleAccount { provider?: 'google' | 'github'; repo?: string }
 
 let state: CloudViewState = {
   mode: isDesktop ? 'desktop' : 'cloud', initialized: false,
   available: !isDesktop && google.clientId() !== null, customClient: false, clientId: '',
-  authenticated: false, needsReconnect: false, signingIn: false,
+  authenticated: false, needsReconnect: false, signingIn: false, provider: null, githubRepo: '',
   email: null, deviceName: '', enabled: false, persistentSession: false,
   devices: [], selectedDeviceId: null, busy: false, error: null, warning: null,
   offline: typeof navigator !== 'undefined' && !navigator.onLine,
@@ -34,8 +38,8 @@ let current: CloudSnapshot | null = null;
 /** The snapshot exactly as downloaded, to avoid re-downloading unchanged content. */
 let base: CloudSnapshot | null = null;
 let token: google.GoogleToken | null = null;
-let account: google.GoogleAccount | null = null;
-let driveFiles = { settings: null as google.DriveFile | null, requests: new Map<string, google.DriveFile>() };
+let account: Account | null = null;
+let driveFiles = { settings: null as RemoteFile | null, requests: new Map<string, RemoteFile>() };
 let pendingNonce: string | null = null;
 let initial: Promise<void> | null = null;
 let revision = 0;
@@ -59,7 +63,7 @@ function readJson<T>(key: string, check: (v: unknown) => v is T): T | null {
   try { const v = JSON.parse(storageGet(key) ?? 'null'); return check(v) ? v : null; } catch { return null; }
 }
 const isToken = (v: unknown): v is google.GoogleToken => typeof (v as google.GoogleToken)?.accessToken === 'string' && Number.isFinite((v as google.GoogleToken)?.expiresAt);
-const isAccount = (v: unknown): v is google.GoogleAccount => typeof (v as google.GoogleAccount)?.userId === 'string' && !!(v as google.GoogleAccount).userId;
+const isAccount = (v: unknown): v is Account => typeof (v as Account)?.userId === 'string' && !!(v as Account).userId;
 
 async function action(task: () => Promise<void>) {
   patch({ busy: true, error: null });
@@ -67,9 +71,24 @@ async function action(task: () => Promise<void>) {
   finally { patch({ busy: false }); }
 }
 
+const isGithub = () => account?.provider === 'github';
+const sourceLabel = () => isGithub() ? 'GitHub 저장소' : '구글 드라이브';
+
+/** The connected backend, bound to the current credential. */
+function backend() {
+  const credential = token!;
+  if (isGithub()) {
+    const cfg = { repo: account?.repo ?? '', token: credential.accessToken };
+    return { list: () => github.listFiles(cfg), download: (id: string) => github.downloadJson(cfg, id),
+      put: (id: string | null, name: string, props: Record<string, string>) => github.putProps(cfg, id, name, props) };
+  }
+  return { list: () => google.listFiles(credential), download: (id: string) => google.downloadJson(credential, id),
+    put: (id: string | null, name: string, props: Record<string, string>) => google.putProps(credential, id, name, props) };
+}
+
 function nativeStatus(value: DesktopCloudStatus) {
   patch({ available: value.available, customClient: value.customClient, clientId: value.clientId, enabled: value.enabled,
-    deviceName: value.deviceName, authenticated: value.authenticated, signingIn: value.signingIn, email: value.email,
+    deviceName: value.deviceName, authenticated: value.authenticated, provider: value.provider === 'github' || value.provider === 'google' ? value.provider : null, githubRepo: value.githubRepo, signingIn: value.signingIn, email: value.email,
     lastUploadAt: value.lastUploadAt, lastCheckAt: value.lastCheckAt, lastUploadBytes: value.lastUploadBytes,
     error: value.lastError, persistentSession: value.persistentSession, mode: 'desktop' });
 }
@@ -77,13 +96,15 @@ function nativeStatus(value: DesktopCloudStatus) {
 /** The token expired (they last an hour on the web): keep data, offer a one-tap reconnect. */
 function expire() {
   token = null; storageSet(TOKEN_KEY, null);
-  patch({ authenticated: false, needsReconnect: !!account, error: account ? null : '구글 로그인이 만료됐어요. 다시 연결해 주세요.' });
+  patch({ authenticated: false, needsReconnect: !!account,
+    error: isGithub() ? 'GitHub 토큰이 만료됐거나 취소됐어요. 새 토큰으로 다시 연결해 주세요.' : account ? null : '구글 로그인이 만료됐어요. 다시 연결해 주세요.' });
 }
 
 function forgetAccount() {
   revision++; inFlight = null; current = null; base = null; token = null; account = null; pendingNonce = null;
   driveFiles = { settings: null, requests: new Map() };
-  patch({ authenticated: false, needsReconnect: false, email: null, hasData: false, devices: [], selectedDeviceId: null, capturedAt: null, lastFetchedAt: null, refreshRequestedAt: null, warning: null });
+  github.clearGithubCache();
+  patch({ authenticated: false, needsReconnect: false, provider: null, githubRepo: '', email: null, hasData: false, devices: [], selectedDeviceId: null, capturedAt: null, lastFetchedAt: null, refreshRequestedAt: null, warning: null });
   changed();
 }
 
@@ -114,7 +135,7 @@ function settingsFromProps(props: Record<string, string> | undefined): SharedSet
   } catch { return null; }
 }
 
-function devicesFrom(files: google.DriveFile[]) {
+function devicesFrom(files: RemoteFile[]) {
   const byDevice = new Map<string, CloudDevice & { fileId: string; props: Record<string, string> }>();
   for (const f of files) {
     if (!f.name.startsWith(SNAPSHOT_PREFIX) || f.appProperties.tv !== 'snapshot') continue;
@@ -127,7 +148,7 @@ function devicesFrom(files: google.DriveFile[]) {
   }
   return [...byDevice.values()].sort((a, b) => b.checkedAt - a.checkedAt);
 }
-function newest(files: google.DriveFile[], name: string) {
+function newest(files: RemoteFile[], name: string) {
   return files.filter((f) => f.name === name).sort((a, b) => b.modifiedTime.localeCompare(a.modifiedTime))[0] ?? null;
 }
 
@@ -135,15 +156,15 @@ async function fetchSnapshot() {
   if (!account || state.mode !== 'cloud') return;
   if (!navigator.onLine) { patch({ offline: true }); return; }
   if (!hasToken()) { expire(); return; }
-  const connection = token!;
+  const remote = backend();
   const ownRevision = revision;
   lastAttempt = Date.now();
-  let files: google.DriveFile[];
-  try { files = await google.listFiles(connection); }
+  let files: RemoteFile[];
+  try { files = await remote.list(); }
   catch (error) {
     if (ownRevision !== revision) return;
-    if (error instanceof google.AuthExpired) { expire(); return; }
-    failureCount++; throw new Error('구글 드라이브에서 기록을 가져오지 못했어요. 연결 상태를 확인해 주세요.');
+    if (error instanceof AuthExpired) { expire(); return; }
+    failureCount++; throw new Error(`${sourceLabel()}에서 기록을 가져오지 못했어요. ${error instanceof Error && isGithub() ? error.message : '연결 상태를 확인해 주세요.'}`);
   }
   if (ownRevision !== revision) return;
   const devices = devicesFrom(files);
@@ -159,10 +180,10 @@ async function fetchSnapshot() {
   let raw = base?.device.id === selected.id && base.capturedAt === selected.capturedAt ? base : null;
   if (!raw) {
     let downloaded: unknown;
-    try { downloaded = await google.downloadJson(connection, selected.fileId); }
+    try { downloaded = await remote.download(selected.fileId); }
     catch (error) {
       if (ownRevision !== revision) return;
-      if (error instanceof google.AuthExpired) { expire(); return; }
+      if (error instanceof AuthExpired) { expire(); return; }
       failureCount++; throw new Error('선택한 PC의 기록을 가져오지 못했어요.');
     }
     if (ownRevision !== revision) return;
@@ -177,7 +198,7 @@ async function fetchSnapshot() {
   const shared = settingsFromProps(driveFiles.settings?.appProperties);
   if (shared) value = { ...value, settings: shared };
   if (current?.device.id === value.device.id && current.capturedAt > value.capturedAt) {
-    patch({ lastFetchedAt: Date.now(), warning: '드라이브에 더 오래된 기록이 있어 이 기기의 최신 기록을 유지했어요.' });
+    patch({ lastFetchedAt: Date.now(), warning: `${sourceLabel()}에 더 오래된 기록이 있어 이 기기의 최신 기록을 유지했어요.` });
     return;
   }
   failureCount = 0; base = raw;
@@ -199,7 +220,8 @@ async function refresh() {
 
 async function restoreAccount() {
   const ownRevision = revision;
-  patch({ authenticated: hasToken(), needsReconnect: !!account && !hasToken(), email: account?.email ?? null });
+  patch({ authenticated: hasToken(), needsReconnect: !!account && !hasToken(), email: account?.email ?? null,
+    provider: account ? account.provider ?? 'google' : null, githubRepo: account?.repo ?? '' });
   if (!account || state.mode !== 'cloud') return;
   const deviceId = storageGet(selectedKey());
   if (deviceId) {
@@ -230,8 +252,8 @@ async function initialize() {
             const who = await google.account(fresh);
             // A different Google account must never see the previous one's cache.
             if (account && account.userId !== who.userId) { await clearCache().catch(() => {}); }
-            account = who; token = fresh;
-            storageSet(ACCOUNT_KEY, JSON.stringify(who)); storageSet(TOKEN_KEY, JSON.stringify(fresh)); storageSet(LOCAL_MODE, null);
+            account = { ...who, provider: 'google' }; token = fresh;
+            storageSet(ACCOUNT_KEY, JSON.stringify(account)); storageSet(TOKEN_KEY, JSON.stringify(fresh)); storageSet(LOCAL_MODE, null);
             patch({ mode: 'cloud' });
           } else if (localMode === 'import' || localMode === 'demo') {
             const cached = await readCache('local');
@@ -284,7 +306,29 @@ async function signIn() {
   }
   await action(async () => {
     patch({ signingIn: true });
-    google.beginSignIn(account?.email); // navigates away
+    google.beginSignIn(isGithub() ? null : account?.email); // navigates away
+  });
+}
+
+/** Connects a private GitHub repository with a fine-grained token (no Google needed). */
+async function connectGithub(repo: string, pat: string) {
+  if (isDesktop) {
+    await action(async () => { nativeStatus(await invoke<DesktopCloudStatus>('cloud_connect_github', { repo: repo.trim(), token: pat.trim() })); });
+    return;
+  }
+  await action(async () => {
+    const cfg = { repo: repo.trim(), token: pat.trim() };
+    if (!github.validRepo(cfg.repo)) throw new Error('저장소는 owner/name 형식으로 입력해 주세요.');
+    if (!github.validToken(cfg.token)) throw new Error('GitHub 토큰(github_pat_… 또는 ghp_…)을 입력해 주세요.');
+    github.clearGithubCache();
+    await github.checkRepo(cfg);
+    const next: Account = { userId: `github:${cfg.repo.toLowerCase()}`, email: cfg.repo, provider: 'github', repo: cfg.repo };
+    const same = account?.userId === next.userId;
+    if (!same) { forgetAccount(); await clearCache().catch(() => {}); }
+    account = next; token = { accessToken: cfg.token, expiresAt: Number.MAX_SAFE_INTEGER };
+    storageSet(ACCOUNT_KEY, JSON.stringify(next)); storageSet(TOKEN_KEY, JSON.stringify(token)); storageSet(LOCAL_MODE, null);
+    patch({ mode: 'cloud', error: null });
+    await restoreAccount();
   });
 }
 
@@ -292,11 +336,13 @@ async function signOut() {
   if (isDesktop) { await action(async () => { nativeStatus(await invoke<DesktopCloudStatus>('cloud_sign_out')); }); return; }
   await action(async () => {
     const old = token;
+    const wasGithub = isGithub();
     forgetAccount();
     storageSet(TOKEN_KEY, null); storageSet(ACCOUNT_KEY, null); storageSet(LOCAL_MODE, null);
     patch({ mode: 'cloud' });
     try { await clearCache(); } catch { patch({ warning: '기기 저장소 삭제를 완료하지 못했어요. 공유 기기라면 브라우저의 사이트 데이터를 삭제해 주세요.' }); }
-    if (old) await google.revoke(old);
+    // GitHub tokens are revoked by the user on GitHub; we only forget it here.
+    if (old && !wasGithub) await google.revoke(old);
   });
 }
 
@@ -318,14 +364,14 @@ async function requestRefresh() {
   await action(async () => {
     if (isDesktop) { nativeStatus(await invoke<DesktopCloudStatus>('cloud_sync_now')); return; }
     const deviceId = state.selectedDeviceId;
-    if (!account || state.mode !== 'cloud' || !deviceId) throw new Error('구글 드라이브에 연결한 뒤 PC를 선택해 주세요.');
-    if (!hasToken()) { expire(); throw new google.AuthExpired(); }
+    if (!account || state.mode !== 'cloud' || !deviceId) throw new Error('먼저 연결한 뒤 PC를 선택해 주세요.');
+    if (!hasToken()) { expire(); throw new AuthExpired(); }
     const ownRevision = revision;
     const nonce = google.newNonce();
     const name = requestName(deviceId);
-    let file: google.DriveFile;
-    try { file = await google.putProps(token!, driveFiles.requests.get(name)?.id ?? null, name, { tv: 'request', deviceId, nonce, at: String(Date.now()) }); }
-    catch (error) { if (error instanceof google.AuthExpired) expire(); throw new Error('PC에 요청을 보내지 못했어요. 연결 상태를 확인해 주세요.'); }
+    let file: RemoteFile;
+    try { file = await backend().put(driveFiles.requests.get(name)?.id ?? null, name, { tv: 'request', deviceId, nonce, at: String(Date.now()) }); }
+    catch (error) { if (error instanceof AuthExpired) expire(); throw new Error('PC에 요청을 보내지 못했어요. 연결 상태를 확인해 주세요.'); }
     if (ownRevision !== revision) return;
     driveFiles.requests.set(name, file);
     pendingNonce = nonce;
@@ -356,14 +402,14 @@ export async function saveSharedSettings(settings: UiSettings) {
   const value = sharedSettings(settings);
   if (!current) throw new Error('데이터를 먼저 불러와 주세요.');
   if (state.mode === 'cloud') {
-    if (!account || !navigator.onLine) throw new Error('공유 설정 저장에는 인터넷 연결과 구글 연결이 필요해요.');
-    if (!hasToken()) { expire(); throw new google.AuthExpired(); }
+    if (!account || !navigator.onLine) throw new Error('공유 설정 저장에는 인터넷 연결과 저장소 연결이 필요해요.');
+    if (!hasToken()) { expire(); throw new AuthExpired(); }
     const ownRevision = revision;
     const props: Record<string, string> = { tv: 'settings', rev: String(Date.now()) };
     for (const key of SHARED_KEYS) props[key] = value[key] === null ? '' : String(value[key]);
-    let file: google.DriveFile;
-    try { file = await google.putProps(token!, driveFiles.settings?.id ?? null, SETTINGS_NAME, props); }
-    catch (error) { if (error instanceof google.AuthExpired) expire(); throw new Error('설정을 저장하지 못했어요. 연결 상태를 확인해 주세요.'); }
+    let file: RemoteFile;
+    try { file = await backend().put(driveFiles.settings?.id ?? null, SETTINGS_NAME, props); }
+    catch (error) { if (error instanceof AuthExpired) expire(); throw new Error('설정을 저장하지 못했어요. 연결 상태를 확인해 주세요.'); }
     if (ownRevision !== revision) return;
     // Reads issued before this save may still carry the previous settings.
     revision++; inFlight = null;
@@ -377,7 +423,7 @@ export async function saveSharedSettings(settings: UiSettings) {
 }
 
 export const cloud = {
-  initialize, signIn, signOut, selectDevice, importFile, requestRefresh,
+  initialize, signIn, signOut, selectDevice, importFile, requestRefresh, connectGithub,
   cancelSignIn: () => { if (isDesktop) void invoke('cloud_cancel_sign_in'); },
   configureDesktop: (config: DesktopConfiguration) => action(async () => {
     nativeStatus(await invoke<DesktopCloudStatus>('cloud_configure', { deviceName: config.deviceName.trim() || '내 PC', enabled: config.enabled, clientId: config.clientId.trim(), clientSecret: config.clientSecret.trim() }));

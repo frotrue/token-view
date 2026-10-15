@@ -1,4 +1,5 @@
-//! Private, optional sync to the user's own Google Drive (hidden appDataFolder).
+//! Private, optional sync to the user's own Google Drive (hidden appDataFolder) or,
+//! alternatively, a private GitHub repository (see `github.rs` for its layout).
 //! Only the worker touches sessions/network. Scanner handoff is a single
 //! latest-value slot: a slow or offline network never blocks local collection.
 //!
@@ -8,11 +9,14 @@
 //!   and `handled` (last refresh-request nonce served).
 //! - `tv-request-<device>`: metadata-only; the phone writes `{nonce, at}`.
 //! - `tv-settings`: metadata-only; shared display/budget settings + `rev`.
+mod github;
 mod google;
 pub mod payload;
+mod store;
 
 use crate::db;
-use google::{Client, DriveError, DriveFile, Endpoints, RefreshError, Session};
+use google::{Client, Endpoints, RefreshError, Session};
+use store::{RemoteFile, Store, StoreError};
 pub use payload::shared_settings;
 use payload::{suspicious_text, valid_shared, SHARED_KEYS};
 use serde::{Deserialize, Serialize};
@@ -55,6 +59,12 @@ struct Config {
     client_id: String,
     #[serde(default)]
     client_secret: String,
+    /// "google" (default) or "github".
+    #[serde(default)]
+    provider: String,
+    /// `owner/name` of the private repository when `provider` is "github".
+    #[serde(default)]
+    github_repo: String,
 }
 fn yes() -> bool {
     true
@@ -74,10 +84,15 @@ impl Default for Config {
             signed_out: true,
             client_id: String::new(),
             client_secret: String::new(),
+            provider: String::new(),
+            github_repo: String::new(),
         }
     }
 }
 impl Config {
+    fn github(&self) -> bool {
+        self.provider == "github"
+    }
     fn client(&self) -> Option<Client> {
         if !self.client_id.is_empty() {
             return Some(Client {
@@ -124,6 +139,9 @@ pub struct DesktopCloudStatus {
     available: bool,
     custom_client: bool,
     client_id: String,
+    /// "google" or "github" once connected; empty before.
+    provider: String,
+    github_repo: String,
     enabled: bool,
     device_id: String,
     device_name: String,
@@ -142,6 +160,8 @@ impl DesktopCloudStatus {
             available: config.client().is_some(),
             custom_client: !config.client_id.is_empty(),
             client_id: config.client_id.clone(),
+            provider: String::new(),
+            github_repo: config.github_repo.clone(),
             enabled: config.enabled,
             device_id: config.device_id.clone(),
             device_name: config.device_name.clone(),
@@ -278,6 +298,11 @@ enum Command {
     },
     SignIn {
         attempt: u64,
+        reply: Reply,
+    },
+    ConnectGithub {
+        repo: String,
+        token: String,
         reply: Reply,
     },
     SignOut(Reply),
@@ -448,6 +473,18 @@ impl CloudSync {
         let attempt = self.shared.attempt.fetch_add(1, Ordering::SeqCst) + 1;
         self.request(|reply| Command::SignIn { attempt, reply })
     }
+    /// Connects a private repository with a fine-grained token instead of Google.
+    pub fn connect_github(&self, repo: String, token: String) -> Result<DesktopCloudStatus, String> {
+        let (repo, token) = (repo.trim().to_owned(), token.trim().to_owned());
+        if !github::valid_repo(&repo) {
+            return Err("저장소는 owner/name 형식으로 입력해 주세요".into());
+        }
+        if !github::valid_token(&token) {
+            return Err("GitHub 토큰(github_pat_… 또는 ghp_…)을 입력해 주세요".into());
+        }
+        self.cancel_sign_in();
+        self.request(|reply| Command::ConnectGithub { repo, token, reply })
+    }
     pub fn cancel_sign_in(&self) {
         self.shared.attempt.fetch_add(1, Ordering::SeqCst);
     }
@@ -489,6 +526,8 @@ struct Worker {
     open: Arc<dyn Fn(&str) + Send + Sync>,
     agent: ureq::Agent,
     ep: Endpoints,
+    github_api: String,
+    github_cache: github::Cache,
     min_upload: Duration,
     heartbeat: Duration,
     pending: Option<Envelope>,
@@ -508,11 +547,11 @@ struct Worker {
     failures: u32,
 }
 
-fn drive_msg(e: DriveError) -> String {
+fn drive_msg(e: StoreError) -> String {
     match e {
-        DriveError::Unauthorized => "구글 로그인이 만료됐어요. 다시 연결해 주세요".into(),
-        DriveError::NotFound => "구글 드라이브에서 파일을 찾지 못했어요".into(),
-        DriveError::Other(s) => s,
+        StoreError::Unauthorized => "로그인이 만료됐어요. 다시 연결해 주세요".into(),
+        StoreError::NotFound => "저장 공간에서 파일을 찾지 못했어요".into(),
+        StoreError::Other(s) => s,
     }
 }
 fn snapshot_name(device: &str) -> String {
@@ -523,8 +562,8 @@ fn request_name(device: &str) -> String {
 }
 /// Newest file with that name; older duplicates (concurrent creates) are returned
 /// separately for cleanup.
-fn pick<'a>(files: &'a [DriveFile], name: &str) -> (Option<&'a DriveFile>, Vec<&'a DriveFile>) {
-    let mut same: Vec<&DriveFile> = files.iter().filter(|f| f.name == name).collect();
+fn pick<'a>(files: &'a [RemoteFile], name: &str) -> (Option<&'a RemoteFile>, Vec<&'a RemoteFile>) {
+    let mut same: Vec<&RemoteFile> = files.iter().filter(|f| f.name == name).collect();
     same.sort_by(|a, b| b.modified.cmp(&a.modified));
     let first = same.first().copied();
     (first, same.into_iter().skip(1).collect())
@@ -583,6 +622,8 @@ impl Worker {
             open: Arc::new(google::open_browser),
             agent: google::agent(),
             ep: Endpoints::default(),
+            github_api: github::API.into(),
+            github_cache: Default::default(),
             min_upload: MIN_UPLOAD,
             heartbeat: HEARTBEAT,
             pending: None,
@@ -637,6 +678,14 @@ impl Worker {
         s.available = self.config.client().is_some();
         s.custom_client = !self.config.client_id.is_empty();
         s.client_id = self.config.client_id.clone();
+        s.provider = if self.session.is_none() {
+            String::new()
+        } else if self.config.github() {
+            "github".into()
+        } else {
+            "google".into()
+        };
+        s.github_repo = self.config.github_repo.clone();
         s.enabled = self.config.enabled;
         s.device_id = self.config.device_id.clone();
         s.device_name = self.config.device_name.clone();
@@ -651,6 +700,7 @@ impl Worker {
     }
     fn reset_context(&mut self) {
         self.shared.generation.fetch_add(1, Ordering::SeqCst);
+        self.github_cache.lock().unwrap().clear();
         self.shared.latest.lock().unwrap().take();
         self.shared.refresh.lock().unwrap().take();
         self.shared.force_next.store(false, Ordering::SeqCst);
@@ -722,15 +772,38 @@ impl Worker {
         }
         Ok(())
     }
-    /// Runs a Drive call with a fresh token, refreshing once on 401.
-    fn drive<T>(&mut self, f: &dyn Fn(&google::Drive) -> Result<T, DriveError>) -> Result<T, DriveError> {
+    /// Runs a storage call against the connected backend. Google tokens are kept
+    /// fresh (refreshing once on 401); a rejected GitHub token signs out.
+    fn drive<T>(&mut self, f: &dyn Fn(&dyn Store) -> Result<T, StoreError>) -> Result<T, StoreError> {
+        if self.config.github() {
+            let token = self
+                .session
+                .as_ref()
+                .ok_or_else(|| StoreError::Other("GitHub 저장소를 먼저 연결해 주세요".into()))?
+                .access_token
+                .clone();
+            let r = f(&github::Repo {
+                agent: &self.agent,
+                api: &self.github_api,
+                token: &token,
+                repo: &self.config.github_repo,
+                cache: &self.github_cache,
+            });
+            if matches!(r, Err(StoreError::Unauthorized)) {
+                self.drop_session();
+                return Err(StoreError::Other(
+                    "GitHub 토큰이 만료됐거나 취소됐어요. 새 토큰으로 다시 연결해 주세요".into(),
+                ));
+            }
+            return r;
+        }
         let expired = self
             .session
             .as_ref()
-            .ok_or_else(|| DriveError::Other("구글 드라이브를 먼저 연결해 주세요".into()))?
+            .ok_or_else(|| StoreError::Other("구글 드라이브를 먼저 연결해 주세요".into()))?
             .needs_refresh(chrono::Utc::now().timestamp_millis());
         if expired {
-            self.refresh_session().map_err(DriveError::Other)?;
+            self.refresh_session().map_err(StoreError::Other)?;
         }
         let call = |w: &Self| {
             f(&google::Drive {
@@ -740,8 +813,8 @@ impl Worker {
             })
         };
         match call(self) {
-            Err(DriveError::Unauthorized) => {
-                self.refresh_session().map_err(DriveError::Other)?;
+            Err(StoreError::Unauthorized) => {
+                self.refresh_session().map_err(StoreError::Other)?;
                 call(self)
             }
             other => other,
@@ -765,7 +838,7 @@ impl Worker {
             client_secret
         };
         // Tokens belong to the OAuth client that issued them.
-        if old.client_id != client_id {
+        if old.client_id != client_id && !old.github() {
             if let Some(s) = self.session.take() {
                 google::revoke(&self.agent, &self.ep, &s.refresh_token);
             }
@@ -809,16 +882,55 @@ impl Worker {
         (self.notify)("cloud-status");
         let next = result?;
         if let Some(old) = self.session.take() {
-            if old.user_id != next.user_id {
+            if !self.config.github() && old.user_id != next.user_id {
                 google::revoke(&self.agent, &self.ep, &old.refresh_token);
             }
         }
+        self.config.provider = "google".into();
         if let Err(e) = install_session(self.store.as_ref(), &self.config, &mut self.session, next) {
             self.config.signed_out = true;
             let _ = self.persist_config();
             self.update_status();
             return Err(e);
         }
+        self.config.signed_out = false;
+        if let Err(e) = self.persist_config() {
+            self.session = None;
+            let _ = self.store.clear(&self.config);
+            self.update_status();
+            return Err(e);
+        }
+        self.reset_context();
+        self.update_status();
+        self.pending_settings = self.read_dirty();
+        if self.config.enabled {
+            self.shared.force_next.store(true, Ordering::SeqCst);
+            let _ = self.scan_trigger.send(());
+        }
+        Ok(())
+    }
+    fn connect_github(&mut self, repo: String, token: String) -> Result<(), String> {
+        github::check_repo(&self.agent, &self.github_api, &token, &repo, &self.github_cache)?;
+        if let Some(old) = self.session.take() {
+            if !self.config.github() {
+                google::revoke(&self.agent, &self.ep, &old.refresh_token);
+            }
+        }
+        let next = Session {
+            access_token: token,
+            refresh_token: String::new(),
+            expires_at: i64::MAX,
+            user_id: format!("github:{}", repo.to_ascii_lowercase()),
+            email: Some(repo.clone()),
+        };
+        if let Err(e) = install_session(self.store.as_ref(), &self.config, &mut self.session, next) {
+            self.config.signed_out = true;
+            let _ = self.persist_config();
+            self.update_status();
+            return Err(e);
+        }
+        self.config.provider = "github".into();
+        self.config.github_repo = repo;
         self.config.signed_out = false;
         if let Err(e) = self.persist_config() {
             self.session = None;
@@ -843,7 +955,8 @@ impl Worker {
         let cleared = self.store.clear(&self.config);
         self.reset_context();
         self.update_status();
-        if let Some(token) = token {
+        // GitHub tokens are revoked by the user on GitHub; we only forget it.
+        if let Some(token) = token.filter(|_| !self.config.github()) {
             google::revoke(&self.agent, &self.ep, &token);
         }
         cleared
@@ -873,6 +986,10 @@ impl Worker {
             }
             Command::SignIn { attempt, reply } => {
                 let r = self.sign_in(attempt);
+                self.reply(r, reply);
+            }
+            Command::ConnectGithub { repo, token, reply } => {
+                let r = self.connect_github(repo, token);
                 self.reply(r, reply);
             }
             Command::SignOut(reply) => {
@@ -981,7 +1098,7 @@ impl Worker {
         let props = settings_props(&settings, &rev);
         let id = self.files.settings.clone();
         let mut r = self.drive(&|d| d.put_props(id.as_deref(), SETTINGS_NAME, &props));
-        if matches!(r, Err(DriveError::NotFound)) {
+        if matches!(r, Err(StoreError::NotFound)) {
             r = self.drive(&|d| d.put_props(None, SETTINGS_NAME, &props));
         }
         let file = r.map_err(drive_msg)?;
@@ -1041,7 +1158,7 @@ impl Worker {
         let name = snapshot_name(&self.config.device_id);
         let id = self.files.snapshot.clone();
         let mut r = self.drive(&|d| d.upload(id.as_deref(), &name, &props, "application/gzip", &bytes));
-        if matches!(r, Err(DriveError::NotFound)) {
+        if matches!(r, Err(StoreError::NotFound)) {
             // Deleted from Drive settings ("앱 데이터 삭제"): create it again.
             r = self.drive(&|d| d.upload(None, &name, &props, "application/gzip", &bytes));
         }
@@ -1078,7 +1195,7 @@ impl Worker {
         let name = snapshot_name(&self.config.device_id);
         match self.drive(&|d| d.put_props(Some(&id), &name, &props)) {
             Ok(_) => {}
-            Err(DriveError::NotFound) => {
+            Err(StoreError::NotFound) => {
                 self.files.snapshot = None;
                 self.uploaded = None;
                 self.pending = Some(pending);

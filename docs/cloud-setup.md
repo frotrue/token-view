@@ -1,6 +1,6 @@
 # 구글 드라이브 동기화 설정
 
-PC 앱이 사용 기록을 **각 사용자의 구글 드라이브**에 올리고, 휴대폰이 같은 구글 계정으로 그 기록을 읽어요. 별도 서버나 DB는 없어요.
+PC 앱이 사용 기록을 **각 사용자의 구글 드라이브**에 올리고, 휴대폰이 같은 구글 계정으로 그 기록을 읽어요. 별도 서버나 DB는 없어요. Google Cloud 설정 없이 쓰고 싶다면 [GitHub 비공개 저장소 방식](#다른-방법-github-비공개-저장소-google-cloud-설정-없이)을 쓸 수 있어요.
 
 - **저장 위치:** 드라이브의 숨겨진 앱 전용 공간(`appDataFolder`)이에요. 사용자의 일반 파일 목록에는 보이지 않아요. 이 앱은 사용자의 다른 파일을 볼 수 없어요.
 - **권한(scope):** `drive.appdata`, 그리고 계정 표시용 `openid` / `email`만 요청해요.
@@ -87,6 +87,28 @@ GitHub 저장소의 **Settings → Secrets and variables → Actions**에 등록
 - 내용이 그대로면 5분마다 `checkedAt` 속성만 갱신해요(약 1KB). 휴대폰은 이 값으로 "몇 분 전 확인"을 표시해요.
 - 휴대폰의 요청이나 **지금 동기화**는 5분 제한 없이 바로 올리고, 처리한 요청의 `nonce`를 `handled`에 남겨요.
 - 요청 파일과 설정 파일은 1분마다 목록 조회 한 번으로 확인해요.
+
+## 다른 방법: GitHub 비공개 저장소 (Google Cloud 설정 없이)
+
+혼자 쓰거나 Google Cloud 프로젝트를 만들고 싶지 않을 때 쓰는 방법이에요. 사용자마다 2분 정도 설정하면 돼요.
+
+1. **저장소 만들기:** GitHub에서 **비공개(Private)** 저장소를 만들어요(예: `token-view-data`). **Add a README file**을 꼭 체크하세요. 빈 저장소에는 쓸 수 없어요.
+2. **토큰 만들기:** **Settings → Developer settings → Personal access tokens → Fine-grained tokens → Generate new token**
+   - **Repository access:** **Only select repositories**를 고르고 1번 저장소만 선택해요.
+   - **Permissions → Repository permissions → Contents:** **Read and write**로 설정해요. Metadata는 자동으로 읽기가 돼요.
+   - **Expiration:** 원하는 기간을 골라요. 만료되면 새 토큰을 다시 입력해야 해요.
+3. **입력하기:** PC 앱 **설정 → 휴대폰 연결 → GitHub 비공개 저장소로 연결**과 휴대폰 웹앱의 같은 칸에 `owner/name`과 토큰을 넣어요.
+
+**동작 방식**
+- 기록은 저장소의 `tv-`로 시작하는 브랜치(`tv-snapshot-<PC ID>`, `tv-request-<PC ID>`, `tv-settings`)에 저장돼요. 기본 브랜치와 README는 건드리지 않아요.
+- 각 브랜치는 **부모 없는 커밋 하나**만 가리키고, 쓸 때마다 강제로 새 커밋으로 옮겨요. 그래서 커밋 기록이 쌓이지 않아요. 속성은 커밋 메시지(JSON)에, 스냅샷은 `snapshot.json.gz`에 들어가요.
+- 업로드 규칙(바뀌었을 때만 최대 5분마다, 그대로면 확인 시각만 갱신)은 구글 드라이브와 같아요.
+
+**보안과 제약**
+- 공개 저장소는 앱이 거부해요.
+- 토큰 보관: PC는 Windows 자격 증명 관리자, 휴대폰은 그 브라우저에만 저장해요. 토큰은 반드시 그 저장소 하나로 범위를 좁히세요.
+- **연결 해제:** 기기에서 토큰만 지워요. 토큰 자체는 GitHub 설정에서 직접 삭제(Revoke)해야 해요.
+- **API 사용량:** 휴대폰이 볼 때 3분마다 1~2회, PC는 1분마다 1회 GitHub API를 호출해요. 토큰당 한도(시간당 5,000회)보다 훨씬 적어요.
 
 ## 나중에 네이티브 모바일 앱으로 만들 때
 

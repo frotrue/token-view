@@ -5,13 +5,13 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
+use super::store::{read_json, RemoteFile, Store, StoreError};
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::time::{Duration, Instant};
 
 pub const SCOPE_DRIVE: &str = "https://www.googleapis.com/auth/drive.appdata";
 const SCOPES: &str = "openid email https://www.googleapis.com/auth/drive.appdata";
-const MAX_DOWNLOAD: u64 = 8 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct Endpoints {
@@ -69,22 +69,6 @@ fn random_token() -> String {
         .flat_map(|u| u.as_bytes().to_vec())
         .collect();
     URL_SAFE_NO_PAD.encode(bytes)
-}
-
-fn read_json(mut response: ureq::http::Response<ureq::Body>) -> Result<(u16, Value), String> {
-    let status = response.status().as_u16();
-    let bytes = response
-        .body_mut()
-        .with_config()
-        .limit(MAX_DOWNLOAD)
-        .read_to_vec()
-        .map_err(|_| "구글 응답을 읽지 못했어요")?;
-    let value = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap_or(Value::Null)
-    };
-    Ok((status, value))
 }
 
 fn claims(id_token: &str) -> Option<Value> {
@@ -306,15 +290,8 @@ pub fn revoke(agent: &ureq::Agent, ep: &Endpoints, token: &str) {
 
 // ---------- Drive ----------
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct DriveFile {
-    pub id: String,
-    pub name: String,
-    pub modified: String,
-    pub props: Map<String, Value>,
-}
-fn drive_file(v: &Value) -> Option<DriveFile> {
-    Some(DriveFile {
+fn drive_file(v: &Value) -> Option<RemoteFile> {
+    Some(RemoteFile {
         id: v.get("id")?.as_str()?.to_owned(),
         name: v.get("name").and_then(Value::as_str).unwrap_or("").to_owned(),
         modified: v
@@ -330,12 +307,6 @@ fn drive_file(v: &Value) -> Option<DriveFile> {
     })
 }
 
-pub enum DriveError {
-    Unauthorized,
-    NotFound,
-    Other(String),
-}
-
 const FIELDS: &str = "id,name,modifiedTime,appProperties";
 
 pub struct Drive<'a> {
@@ -344,26 +315,28 @@ pub struct Drive<'a> {
     pub token: &'a str,
 }
 impl Drive<'_> {
-    fn check(&self, r: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<Value, DriveError> {
-        let r = r.map_err(|_| DriveError::Other("구글 드라이브에 연결하지 못했어요".into()))?;
-        let (status, value) = read_json(r).map_err(DriveError::Other)?;
+    fn check(&self, r: Result<ureq::http::Response<ureq::Body>, ureq::Error>) -> Result<Value, StoreError> {
+        let r = r.map_err(|_| StoreError::Other("구글 드라이브에 연결하지 못했어요".into()))?;
+        let (status, value) = read_json(r).map_err(StoreError::Other)?;
         match status {
             200..=299 => Ok(value),
-            401 => Err(DriveError::Unauthorized),
-            404 => Err(DriveError::NotFound),
+            401 => Err(StoreError::Unauthorized),
+            404 => Err(StoreError::NotFound),
             403 if value.pointer("/error/errors/0/reason").and_then(Value::as_str)
                 == Some("storageQuotaExceeded") =>
             {
-                Err(DriveError::Other("구글 드라이브 저장 공간이 가득 찼어요".into()))
+                Err(StoreError::Other("구글 드라이브 저장 공간이 가득 찼어요".into()))
             }
-            _ => Err(DriveError::Other(format!("구글 드라이브 요청 실패 (HTTP {status})"))),
+            _ => Err(StoreError::Other(format!("구글 드라이브 요청 실패 (HTTP {status})"))),
         }
     }
     fn auth(&self) -> String {
         format!("Bearer {}", self.token)
     }
 
-    pub fn list(&self) -> Result<Vec<DriveFile>, DriveError> {
+}
+impl Store for Drive<'_> {
+    fn list(&self) -> Result<Vec<RemoteFile>, StoreError> {
         let url = format!(
             "{}/drive/v3/files?spaces=appDataFolder&pageSize=1000&fields=files({FIELDS})",
             self.base
@@ -375,15 +348,14 @@ impl Drive<'_> {
             .unwrap_or_default())
     }
 
-    /// Creates (`id` = None) or replaces a file's content and appProperties.
-    pub fn upload(
+    fn upload(
         &self,
         id: Option<&str>,
         name: &str,
         props: &Map<String, Value>,
         mime: &str,
         bytes: &[u8],
-    ) -> Result<DriveFile, DriveError> {
+    ) -> Result<RemoteFile, StoreError> {
         let mut meta = json!({"appProperties": props, "mimeType": mime});
         if id.is_none() {
             meta["name"] = json!(name);
@@ -411,16 +383,15 @@ impl Drive<'_> {
                 .header("Content-Type", &ctype)
                 .send(&body[..]),
         };
-        drive_file(&self.check(r)?).ok_or_else(|| DriveError::Other("구글 드라이브 응답이 올바르지 않아요".into()))
+        drive_file(&self.check(r)?).ok_or_else(|| StoreError::Other("구글 드라이브 응답이 올바르지 않아요".into()))
     }
 
-    /// Creates (`id` = None) or updates a metadata-only file.
-    pub fn put_props(
+    fn put_props(
         &self,
         id: Option<&str>,
         name: &str,
         props: &Map<String, Value>,
-    ) -> Result<DriveFile, DriveError> {
+    ) -> Result<RemoteFile, StoreError> {
         let r = match id {
             None => self
                 .agent
@@ -435,10 +406,10 @@ impl Drive<'_> {
                 .header("Content-Type", "application/json; charset=UTF-8")
                 .send(json!({"appProperties":props}).to_string()),
         };
-        drive_file(&self.check(r)?).ok_or_else(|| DriveError::Other("구글 드라이브 응답이 올바르지 않아요".into()))
+        drive_file(&self.check(r)?).ok_or_else(|| StoreError::Other("구글 드라이브 응답이 올바르지 않아요".into()))
     }
 
-    pub fn delete(&self, id: &str) -> Result<(), DriveError> {
+    fn delete(&self, id: &str) -> Result<(), StoreError> {
         self.check(
             self.agent
                 .delete(&format!("{}/drive/v3/files/{id}", self.base))

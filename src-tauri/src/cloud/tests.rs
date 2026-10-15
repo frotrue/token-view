@@ -50,6 +50,8 @@ fn fixture(url: &str) -> (CloudSync, Worker, Scratch, mpsc::Receiver<()>) {
         signed_out: false,
         client_id: "test.apps.googleusercontent.com".into(),
         client_secret: "test-secret".into(),
+        provider: "google".into(),
+        github_repo: String::new(),
     };
     let path = std::env::temp_dir().join(format!("token-view-cloud-test-{}.db", Uuid::new_v4()));
     db::open(&path).unwrap();
@@ -564,4 +566,140 @@ fn native_snapshot_fixture_matches_public_contract() {
     if let Some(path) = std::env::var_os("TOKEN_VIEW_TEST_SNAPSHOT_PATH") {
         std::fs::write(path, serde_json::to_vec_pretty(snapshot).unwrap()).unwrap();
     }
+}
+
+// ---------- GitHub repository backend ----------
+
+const PAT: &str = "github_pat_11TESTTOKEN0123456789abcdef";
+fn github_fixture(url: &str) -> (CloudSync, Worker, Scratch, mpsc::Receiver<()>) {
+    let (handle, mut worker, scratch, rx) = fixture(url);
+    worker.config.provider = "github".into();
+    worker.config.github_repo = "me/tv-data".into();
+    worker.github_api = url.into();
+    worker.session = Some(Session {
+        access_token: PAT.into(),
+        refresh_token: String::new(),
+        expires_at: i64::MAX,
+        user_id: "github:me/tv-data".into(),
+        email: Some("me/tv-data".into()),
+    });
+    worker.update_status();
+    (handle, worker, scratch, rx)
+}
+
+#[test]
+fn github_repo_and_token_formats_are_validated() {
+    assert!(github::valid_repo("frotrue/token-view-data"));
+    assert!(github::valid_repo("a-b/c.d_e"));
+    for repo in ["", "noslash", "a/b/c", "../x", "a/.git", "a b/c", "a/b?x"] {
+        assert!(!github::valid_repo(repo), "accepted {repo:?}");
+    }
+    assert!(github::valid_token(PAT));
+    assert!(github::valid_token("ghp_0123456789abcdefghijABCDEFGHIJ"));
+    assert!(!github::valid_token("gho_oauthtoken0123456789"));
+    assert!(!github::valid_token("github_pat_with space 0123456789"));
+}
+
+#[test]
+fn github_sync_writes_parentless_commits_and_marks_reuse_the_tree() {
+    let (url, join) = server(vec![
+        (200, json!([])),                                // poll: no tv- branches yet
+        (201, json!({"sha":"blob1"})),                   // upload: blob
+        (201, json!({"sha":"tree1"})),                   //         tree
+        (201, json!({"sha":"commit1"})),                 //         commit
+        (422, json!({"message":"Reference does not exist"})), // PATCH ref
+        (201, json!({"ref":"refs/heads/x"})),            // POST ref
+        (201, json!({"sha":"tree2"})),                   // settings: meta tree
+        (201, json!({"sha":"commit2"})),
+        (200, json!({})),                                // PATCH ref
+        (201, json!({"sha":"commit3"})),                 // mark: commit on tree1
+        (200, json!({})),
+    ]);
+    let (_, mut worker, _scratch, _) = github_fixture(&url);
+    worker.next_poll = Instant::now();
+    worker.heartbeat = Duration::ZERO;
+    let now = chrono::Utc::now().timestamp_millis();
+    worker.pending = Some(envelope(1, now - 2000, "a"));
+    worker.work().unwrap();
+    worker.pending = Some(envelope(1, now - 1000, "a"));
+    worker.work().unwrap();
+    let reqs = join.join().unwrap();
+    let device = worker.config.device_id.clone();
+    assert!(reqs[0].line.starts_with("GET /repos/me/tv-data/git/matching-refs/heads/tv-"));
+    assert_eq!(reqs[0].auth, format!("Bearer {PAT}"));
+    assert!(reqs[1].line.starts_with("POST /repos/me/tv-data/git/blobs"));
+    use base64::Engine;
+    let gz = base64::engine::general_purpose::STANDARD.decode(reqs[1].json()["content"].as_str().unwrap()).unwrap();
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(&gz[..]).read_to_string(&mut text).unwrap();
+    assert!(text.contains("\"content\":\"a\""));
+    assert_eq!(reqs[2].json()["tree"][0]["path"], "snapshot.json.gz");
+    let commit = reqs[3].json();
+    assert_eq!(commit["parents"], json!([]));
+    let meta: Value = serde_json::from_str(commit["message"].as_str().unwrap()).unwrap();
+    assert_eq!(meta["tv"], "snapshot");
+    assert_eq!(meta["capturedAt"], (now - 2000).to_string());
+    assert!(reqs[4].line.starts_with(&format!("PATCH /repos/me/tv-data/git/refs/heads/tv-snapshot-{device}")));
+    assert_eq!(reqs[4].json()["force"], true);
+    assert_eq!(reqs[5].json()["ref"], format!("refs/heads/tv-snapshot-{device}"));
+    assert_eq!(reqs[6].json()["tree"][0]["path"], "meta.json");
+    // The unchanged-content mark keeps the snapshot tree and only changes the message.
+    let mark = reqs[9].json();
+    assert_eq!(mark["tree"], "tree1");
+    let meta: Value = serde_json::from_str(mark["message"].as_str().unwrap()).unwrap();
+    assert_eq!(meta["checkedAt"], (now - 1000).to_string());
+}
+
+#[test]
+fn github_list_reads_properties_from_commit_messages_once_per_commit() {
+    let refs = json!([
+        {"ref":"refs/heads/tv-request-pc1","object":{"sha":"r1"}},
+        {"ref":"refs/heads/tv-settings","object":{"sha":"s1"}},
+    ]);
+    let (url, join) = server(vec![
+        (200, refs.clone()),
+        (200, json!({"sha":"r1","message":"{\"tv\":\"request\",\"nonce\":\"abcdefgh12\"}","tree":{"sha":"t"},"committer":{"date":"2026-10-15T00:00:00Z"}})),
+        (200, json!({"sha":"s1","message":"not json","tree":{"sha":"t2"}})),
+        (200, refs),
+    ]);
+    let cache = github::Cache::default();
+    let agent = google::agent();
+    let repo = github::Repo { agent: &agent, api: &url, token: PAT, repo: "me/tv-data", cache: &cache };
+    let mut files = repo.list().ok().unwrap();
+    files.sort_by(|a, b| a.name.cmp(&b.name));
+    assert_eq!(files[0].name, "tv-request-pc1");
+    assert_eq!(files[0].props["nonce"], "abcdefgh12");
+    assert!(files[1].props.is_empty());
+    // Unchanged branches are served from the cache: one call.
+    assert_eq!(repo.list().ok().unwrap().len(), 2);
+    assert_eq!(join.join().unwrap().len(), 4);
+}
+
+#[test]
+fn github_connection_requires_a_private_readable_repository() {
+    let (url, join) = server(vec![
+        (200, json!({"private":false})),
+        (401, json!({"message":"Bad credentials"})),
+        (200, json!({"private":true})),
+        (409, json!({"message":"Git Repository is empty."})),
+    ]);
+    let cache = github::Cache::default();
+    let agent = google::agent();
+    let check = || github::check_repo(&agent, &url, PAT, "me/tv-data", &cache);
+    assert!(check().unwrap_err().contains("비공개"));
+    assert!(check().unwrap_err().contains("토큰"));
+    assert!(check().unwrap_err().contains("README"));
+    assert_eq!(join.join().unwrap().len(), 4);
+}
+
+#[test]
+fn rejected_github_token_signs_out_and_never_reports_the_token() {
+    let (url, join) = server(vec![(401, json!({"message":"Bad credentials"}))]);
+    let (handle, mut worker, _scratch, _) = github_fixture(&url);
+    assert_eq!(handle.status().provider, "github");
+    let err = worker.poll().unwrap_err();
+    assert!(err.contains("GitHub 토큰"));
+    assert!(worker.session.is_none());
+    assert!(!serde_json::to_string(&handle.status()).unwrap().contains(PAT));
+    join.join().unwrap();
 }

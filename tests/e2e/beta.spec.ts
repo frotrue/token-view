@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
-  CLIENT_ID, DRIVE, EMAIL, PC_A, PC_B, cacheRecordCount, downloadCalls, expectNoViewportOverflow,
-  importJson, listCalls, loginCloud, mockCloud, selectTab, snapshotFixture, useClientId, waitForOfflineShell,
+  CLIENT_ID, DRIVE, EMAIL, PAT, PC_A, PC_B, REPO, cacheRecordCount, connectGithub, downloadCalls, expectNoViewportOverflow,
+  importJson, listCalls, loginCloud, mockCloud, mockGithub, selectTab, snapshotFixture, useClientId, waitForOfflineShell,
 } from './fixtures';
 
 test('onboarding starts empty; explicit sample mode works across every tab', async ({ page }, testInfo) => {
@@ -131,6 +131,7 @@ test('Google client id configuration rejects anything but an OAuth client id', a
   await page.goto('/');
   await expect(page.getByText('이 빌드에는 구글 클라이언트 ID가 없어요')).toBeVisible();
   await expect(page.getByRole('button', { name: '구글 계정으로 연결', exact: true })).toHaveCount(0);
+  await page.locator('summary').filter({ hasText: '구글 클라이언트 ID' }).click();
   await page.getByLabel('클라이언트 ID', { exact: true }).fill('https://evil.example');
   await page.getByRole('button', { name: '클라이언트 ID 저장', exact: true }).click();
   await expect(page.locator('.cloud-panel').getByRole('alert')).toContainText('apps.googleusercontent.com');
@@ -273,7 +274,7 @@ test.describe('mocked Google Drive workflows (no live Google project)', () => {
     const lateRead = page.waitForResponse((response) => response.url().includes('/drive/v3/files?spaces='));
     releaseRead();
     await lateRead;
-    await expect(page.locator('.cloud-panel').getByRole('button', { name: '드라이브 새로고침', exact: true })).toBeEnabled();
+    await expect(page.locator('.cloud-panel').getByRole('button', { name: '기록 새로고침', exact: true })).toBeEnabled();
     await expect(page.getByLabel('월 예산 · 전체 (USD)', { exact: true })).toHaveValue('456');
     await context.setOffline(true);
     await page.reload();
@@ -382,5 +383,56 @@ test.describe('mocked Google Drive workflows (no live Google project)', () => {
     await context.setOffline(false);
     await expect.poll(calls).toBe(offlineBaseline + 1);
     expect(backend.unexpected).toEqual([]);
+  });
+});
+
+test.describe('mocked private GitHub repository workflows (no live GitHub)', () => {
+  test('connect with a fine-grained token, read the PC snapshot, request a refresh and share settings', async ({ page }) => {
+    const gh = await mockGithub(page);
+    await page.goto('/');
+    await connectGithub(page);
+    const banner = page.getByRole('region', { name: '데이터 기준 시각' });
+    await expect(banner).toContainText('QA 작업 PC');
+    await expect(page.getByText('$12.50', { exact: true }).first()).toBeVisible();
+    expect(gh.calls.every((call) => call.auth === `Bearer ${PAT}`)).toBe(true);
+    await banner.getByRole('button', { name: 'PC에 최신 한도 요청', exact: true }).click();
+    await expect(banner.getByRole('status')).toBeVisible();
+    const request = gh.requests.get(`tv-request-${PC_A}`)!;
+    expect(request.tv).toBe('request');
+    // The PC serves the request: its snapshot branch now names the nonce.
+    gh.devices.set(PC_A, { snapshot: snapshotFixture({ now: Date.now(), cost: 19.5 }), handled: request.nonce });
+    await page.getByRole('button', { name: '가져오기', exact: true }).click();
+    await expect(page.getByText('$19.50', { exact: true }).first()).toBeVisible();
+    await expect(banner.getByRole('status')).toHaveCount(0);
+    await selectTab(page, '설정');
+    await expect(page.locator('.cloud-panel')).toContainText(REPO);
+    await page.getByLabel('월 예산 · 전체 (USD)', { exact: true }).fill('321');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await expect(page.getByRole('status')).toContainText('설정을 저장했어요');
+    expect(gh.settings!.monthlyBudget).toBe(321);
+    await page.reload();
+    await expect(page.getByRole('region', { name: '데이터 기준 시각' })).toContainText('QA 작업 PC');
+    await selectTab(page, '설정');
+    await page.getByRole('button', { name: '연결 해제', exact: true }).click();
+    await expect.poll(() => cacheRecordCount(page)).toBe(0);
+    expect(await page.evaluate(() => localStorage.getItem('tv-google-token-v1'))).toBeNull();
+    expect(gh.unexpected).toEqual([]);
+    await expectNoViewportOverflow(page);
+  });
+
+  test('public repositories, malformed and rejected tokens are refused without storing anything', async ({ page }) => {
+    const gh = await mockGithub(page);
+    gh.public = true;
+    await page.goto('/');
+    await connectGithub(page, 'not-a-token');
+    const alert = page.locator('.cloud-panel').getByRole('alert');
+    await expect(alert).toContainText('GitHub 토큰(github_pat_');
+    await connectGithub(page);
+    await expect(alert).toContainText('공개 저장소는 사용할 수 없어요');
+    gh.public = false;
+    await connectGithub(page, 'github_pat_11WRONG0123456789abcdefABCDEF');
+    await expect(alert).toContainText('GitHub 토큰이 만료됐거나 취소됐어요');
+    expect(await page.evaluate(() => [localStorage.getItem('tv-google-token-v1'), localStorage.getItem('tv-google-account-v1')])).toEqual([null, null]);
+    await expect(page.getByText('누적 총 토큰', { exact: true })).toHaveCount(0);
   });
 });

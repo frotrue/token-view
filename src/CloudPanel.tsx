@@ -14,6 +14,8 @@ export function CloudPanel({ onboarding = false }: { onboarding?: boolean }) {
   const [deviceName, setDeviceName] = useState(state.deviceName);
   const [clientId, setClientId] = useState(state.clientId);
   const [clientSecret, setClientSecret] = useState("");
+  const [repo, setRepo] = useState(state.githubRepo);
+  const [pat, setPat] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
@@ -23,7 +25,8 @@ export function CloudPanel({ onboarding = false }: { onboarding?: boolean }) {
 
   useEffect(() => { setDeviceName(state.deviceName); }, [state.deviceName]);
   useEffect(() => { setClientId(state.clientId); setClientSecret(""); }, [state.clientId]);
-  useEffect(() => { setError(""); setMessage(""); }, [state.email, state.authenticated]);
+  useEffect(() => { setError(""); setMessage(""); setPat(""); }, [state.email, state.authenticated]);
+  useEffect(() => { if (state.githubRepo) setRepo(state.githubRepo); }, [state.githubRepo]);
 
   const run = async (name: string, action: () => Promise<void>, success = "") => {
     setPending(name);
@@ -46,18 +49,23 @@ export function CloudPanel({ onboarding = false }: { onboarding?: boolean }) {
     event.preventDefault();
     void run("client", () => cloud.setClientId(clientId.trim() || null), "클라이언트 ID를 저장했어요.");
   };
+  const connectGithub = (event: FormEvent) => {
+    event.preventDefault();
+    void run("github", async () => { await cloud.connectGithub(repo, pat); setPat(""); });
+  };
   const connected = state.authenticated || state.needsReconnect;
+  const github = state.provider === "github";
 
   return (
-    <Card title={desktop ? "휴대폰 연결 · 구글 드라이브" : onboarding ? "내 기록 연결하기" : "구글 드라이브 · 기기"}
+    <Card title={desktop ? "휴대폰 연결" : onboarding ? "내 기록 연결하기" : "연결 · 기기"}
       right={<span className={`source-pill ${state.authenticated ? "connected" : ""}`}>{state.authenticated ? "연결됨" : state.needsReconnect ? "다시 연결 필요" : "연결 전"}</span>}
       className="cloud-panel">
       <div className="cloud-stack">
         {!state.initialized && <div className="muted" role="status">저장된 연결을 확인하고 있어요…</div>}
         <p className="cloud-copy">
           {desktop
-            ? "이 PC의 사용량과 한도를 내 구글 드라이브의 숨겨진 앱 전용 공간에 올려 휴대폰에서 확인하세요. 다른 드라이브 파일에는 접근하지 않아요."
-            : "PC가 내 구글 드라이브에 올린 Claude Code·Codex 기록을 가져와요. PC와 같은 구글 계정으로 연결하세요."}
+            ? "이 PC의 사용량과 한도를 내 구글 드라이브의 숨겨진 앱 전용 공간(또는 내 GitHub 비공개 저장소)에 올려 휴대폰에서 확인하세요."
+            : "PC가 내 구글 드라이브나 GitHub 비공개 저장소에 올린 Claude Code·Codex 기록을 가져와요. PC와 같은 곳으로 연결하세요."}
         </p>
 
         {!connected && state.available && (
@@ -76,14 +84,14 @@ export function CloudPanel({ onboarding = false }: { onboarding?: boolean }) {
           </div>
         )}
         {!state.available && state.initialized && (
-          <div className="notice info">이 빌드에는 구글 클라이언트 ID가 없어요. 아래 고급 설정에서 입력하거나, JSON 파일 또는 샘플로 먼저 둘러보세요.</div>
+          <div className="notice info">이 빌드에는 구글 클라이언트 ID가 없어요. 아래 GitHub 저장소로 연결하거나, 고급 설정에서 ID를 입력하세요.</div>
         )}
 
         {connected && (
           <>
             <div className="cloud-account">
-              <div><span className="muted">연결된 구글 계정</span><strong>{state.email ?? "구글 계정"}</strong></div>
-              {state.needsReconnect && (
+              <div><span className="muted">{github ? "연결된 GitHub 저장소" : "연결된 구글 계정"}</span><strong>{github ? state.githubRepo : state.email ?? "구글 계정"}</strong></div>
+              {state.needsReconnect && !github && (
                 <button className="btn primary" disabled={disabled || state.offline} onClick={() => void run("login", () => cloud.signIn())}>
                   {pending === "login" ? "구글로 이동 중…" : "다시 연결"}
                 </button>
@@ -92,7 +100,7 @@ export function CloudPanel({ onboarding = false }: { onboarding?: boolean }) {
                 {pending === "logout" ? "해제 중…" : "연결 해제"}
               </button>
             </div>
-            {state.needsReconnect && <span className="hint">웹에서는 구글 연결이 1시간 동안 유지돼요. 저장된 기록은 그대로 볼 수 있어요.</span>}
+            {state.needsReconnect && !github && <span className="hint">웹에서는 구글 연결이 1시간 동안 유지돼요. 저장된 기록은 그대로 볼 수 있어요.</span>}
             {desktop ? (
               <>
                 <label className="check cloud-toggle">
@@ -122,11 +130,11 @@ export function CloudPanel({ onboarding = false }: { onboarding?: boolean }) {
                     <span className="hint">선택한 PC의 기록만 표시해요. 기기별 사용량을 합산하지 않아요.</span>
                   </div>
                 ) : state.authenticated ? (
-                  <div className="notice info">아직 이 구글 계정에 올라온 PC 기록이 없어요. PC의 Token View 설정 → 휴대폰 연결에서 같은 계정으로 연결해 주세요.</div>
+                  <div className="notice info">아직 올라온 PC 기록이 없어요. PC의 Token View 설정 → 휴대폰 연결에서 같은 {github ? "저장소" : "구글 계정"}로 연결해 주세요.</div>
                 ) : null}
                 <div className="row cloud-actions">
                   <button className="btn" disabled={disabled || state.offline || !state.authenticated} onClick={() => void run("refresh", () => cloud.refresh())}>
-                    {pending === "refresh" ? "가져오는 중…" : state.mode === "cloud" ? "드라이브 새로고침" : "드라이브 기록으로 돌아가기"}
+                    {pending === "refresh" ? "가져오는 중…" : state.mode === "cloud" ? "기록 새로고침" : "연결된 기록으로 돌아가기"}
                   </button>
                   <button className="btn" disabled={disabled || state.offline || !state.authenticated || !state.selectedDeviceId}
                     onClick={() => void run("request", () => cloud.requestRefresh(), "PC에 요청했어요. PC가 켜져 있으면 1~2분 안에 최신 한도를 올려요.")}>
@@ -139,7 +147,30 @@ export function CloudPanel({ onboarding = false }: { onboarding?: boolean }) {
           </>
         )}
 
-        <details className="cloud-advanced" open={!state.available && state.initialized ? true : undefined}>
+        {(!connected || (state.needsReconnect && github)) && (
+          <details className="cloud-advanced" open={(!state.available && state.initialized) || (state.needsReconnect && github) ? true : undefined}>
+            <summary>GitHub 비공개 저장소로 연결<span>구글 대신</span></summary>
+            <form className="cloud-form" onSubmit={connectGithub}>
+              <p className="hint">README가 있는 비공개 저장소와, 그 저장소 하나에만 Contents 읽기·쓰기 권한을 준 fine-grained 토큰이 필요해요. PC와 휴대폰에 같은 저장소를 입력하세요.</p>
+              <div className="field">
+                <label htmlFor={`${id}-repo`}>저장소 (owner/name)</label>
+                <input id={`${id}-repo`} className="inp" autoComplete="off" spellCheck={false} value={repo}
+                  onChange={(event) => setRepo(event.target.value)} placeholder="me/token-view-data" disabled={disabled} />
+              </div>
+              <div className="field">
+                <label htmlFor={`${id}-pat`}>GitHub 토큰</label>
+                <input id={`${id}-pat`} className="inp" type="password" autoComplete="off" spellCheck={false} value={pat}
+                  onChange={(event) => setPat(event.target.value)} placeholder="github_pat_…" disabled={disabled} />
+                <span className="hint">{desktop ? "토큰은 Windows 자격 증명 관리자에 저장돼요." : "토큰은 이 기기의 브라우저에만 저장돼요."} 기록은 저장소의 tv-로 시작하는 브랜치에 덮어써서 커밋 기록이 쌓이지 않아요.</span>
+              </div>
+              <button type="submit" className="btn" disabled={disabled || !repo.trim() || !pat.trim()}>
+                {pending === "github" ? "확인 중…" : "GitHub 저장소 연결"}
+              </button>
+            </form>
+          </details>
+        )}
+
+        <details className="cloud-advanced" open={!state.available && state.initialized && desktop ? true : undefined}>
           <summary>{desktop ? "PC 이름 · 연결 설정" : "구글 클라이언트 ID"}<span>고급</span></summary>
           {desktop ? (
             <form className="cloud-form" onSubmit={saveDesktop}>

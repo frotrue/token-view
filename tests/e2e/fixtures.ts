@@ -1,4 +1,5 @@
 import { expect, type BrowserContext, type Page } from '@playwright/test';
+import { createHash } from 'node:crypto';
 import { gzipSync } from 'node:zlib';
 import type { CloudSnapshot, SharedSettings } from '../../src/cloud/types';
 
@@ -183,4 +184,110 @@ export async function loginCloud(page: Page) {
   await page.getByRole('button', { name: '구글 계정으로 연결', exact: true }).click();
   await expect(page.getByRole('region', { name: '데이터 기준 시각' })).toContainText('QA 작업 PC');
   await expect(page.getByText('API 환산 누적 비용', { exact: true })).toBeVisible();
+}
+
+// ---------- private GitHub repository backend ----------
+
+export const REPO = 'me/tv-data';
+export const PAT = 'github_pat_11FIXTURE0123456789abcdefABCDEF';
+export interface MockGithub {
+  devices: Map<string, MockDevice>;
+  settings: SharedSettings | null;
+  requests: Map<string, Record<string, string>>;
+  calls: { method: string; url: string; body: unknown; auth: string | null }[];
+  public: boolean;
+  unexpected: string[];
+}
+const sha = (text: string) => createHash('sha1').update(text).digest('hex');
+
+// Branch `tv-…` → one parentless commit whose message is the record's properties.
+export async function mockGithub(target: Page | BrowserContext, now = Date.now()): Promise<MockGithub> {
+  const gh: MockGithub = {
+    devices: new Map([[PC_A, { snapshot: snapshotFixture({ now: now - 20 * 60_000 }) }]]),
+    settings: { ...settingsFixture }, requests: new Map(), calls: [], public: false, unexpected: [],
+  };
+  const commits = new Map<string, string>();
+  const branches = () => {
+    const out = new Map<string, Record<string, string>>();
+    for (const [id, d] of gh.devices) {
+      const props: Record<string, string> = { tv: 'snapshot', schema: '1', enc: 'gzip', deviceId: id, deviceName: d.snapshot.device.name,
+        capturedAt: String(d.snapshot.capturedAt), checkedAt: String(d.checkedAt ?? d.snapshot.capturedAt) };
+      if (d.handled) props.handled = d.handled;
+      out.set(`tv-snapshot-${id}`, props);
+    }
+    if (gh.settings) {
+      const props: Record<string, string> = { tv: 'settings', rev: '1' };
+      for (const [k, v] of Object.entries(gh.settings)) props[k] = v === null ? '' : String(v);
+      out.set('tv-settings', props);
+    }
+    for (const [name, props] of gh.requests) out.set(name, props);
+    return out;
+  };
+  await target.route('https://api.github.com/**', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const method = request.method();
+    if (method === 'OPTIONS') { await route.fulfill({ status: 204, headers: cors }); return; }
+    const body = request.postDataJSON();
+    gh.calls.push({ method, url: url.toString(), body, auth: request.headers().authorization ?? null });
+    const json = (value: unknown, status = 200) => route.fulfill({ status, headers: cors, contentType: 'application/json', body: JSON.stringify(value) });
+    if (request.headers().authorization !== `Bearer ${PAT}`) { await json({ message: 'Bad credentials' }, 401); return; }
+    const base = `/repos/${REPO}`;
+    const path = url.pathname.startsWith(base) ? url.pathname.slice(base.length) : null;
+    if (path === null) { await json({ message: 'Not Found' }, 404); return; }
+    if (path === '' && method === 'GET') { await json({ full_name: REPO, private: !gh.public }); return; }
+    if (path === '/git/matching-refs/heads/tv-' && method === 'GET') {
+      const refs = [...branches()].map(([name, props]) => {
+        const message = JSON.stringify(props);
+        const s = sha(message);
+        commits.set(s, message);
+        return { ref: `refs/heads/${name}`, object: { sha: s, type: 'commit' } };
+      });
+      await json(refs); return;
+    }
+    const commit = /^\/git\/commits\/([0-9a-f]{40})$/.exec(path);
+    if (commit && method === 'GET') { await json({ sha: commit[1], message: commits.get(commit[1]) ?? '', committer: { date: new Date(now).toISOString() } }); return; }
+    if (path === '/contents/snapshot.json.gz' && method === 'GET') {
+      const device = gh.devices.get((url.searchParams.get('ref') ?? '').replace('tv-snapshot-', ''));
+      if (!device) { await json({ message: 'Not Found' }, 404); return; }
+      await route.fulfill({ status: 200, headers: cors, contentType: 'application/octet-stream', body: gzipSync(Buffer.from(JSON.stringify(device.snapshot))) }); return;
+    }
+    if (path === '/git/trees' && method === 'POST') { await json({ sha: sha(JSON.stringify(body)) }, 201); return; }
+    if (path === '/git/commits' && method === 'POST') {
+      const message = (body as { message: string }).message;
+      expect((body as { parents: unknown[] }).parents).toEqual([]);
+      const s = sha(message + Math.random());
+      commits.set(s, message);
+      await json({ sha: s }, 201); return;
+    }
+    const setRef = (name: string, s: string) => {
+      const props = JSON.parse(commits.get(s) ?? '{}') as Record<string, string>;
+      if (props.tv === 'settings') {
+        const num = (v: string) => v === '' ? null : Number(v);
+        gh.settings = { currency: props.currency as 'USD' | 'KRW', krwRate: Number(props.krwRate), monthlyBudget: num(props.monthlyBudget), budgetClaude: num(props.budgetClaude), budgetCodex: num(props.budgetCodex) };
+      } else if (props.tv === 'request') gh.requests.set(name, props);
+    };
+    const patchRef = /^\/git\/refs\/heads\/(tv-[A-Za-z0-9-]+)$/.exec(path);
+    if (patchRef && method === 'PATCH') {
+      if (!branches().has(patchRef[1])) { await json({ message: 'Reference does not exist' }, 422); return; }
+      setRef(patchRef[1], (body as { sha: string }).sha);
+      await json({ ref: `refs/heads/${patchRef[1]}` }); return;
+    }
+    if (path === '/git/refs' && method === 'POST') {
+      const b = body as { ref: string; sha: string };
+      setRef(b.ref.replace('refs/heads/', ''), b.sha);
+      await json({ ref: b.ref }, 201); return;
+    }
+    gh.unexpected.push(`${method} ${url.pathname}`);
+    await json({ message: 'Unexpected mock API request' }, 500);
+  });
+  return gh;
+}
+
+export async function connectGithub(page: Page, token = PAT) {
+  const form = page.locator('.cloud-panel');
+  if (!(await form.getByLabel('저장소 (owner/name)').isVisible())) await form.locator('summary').filter({ hasText: 'GitHub 비공개 저장소로 연결' }).click();
+  await form.getByLabel('저장소 (owner/name)').fill(REPO);
+  await form.getByLabel('GitHub 토큰').fill(token);
+  await form.getByRole('button', { name: 'GitHub 저장소 연결', exact: true }).click();
 }

@@ -256,8 +256,10 @@ function SnapshotBanner({ live, snapshotTimeZone, onSettings }: { live: Live; sn
     {snapshotTimeZone && snapshotTimeZone !== Intl.DateTimeFormat().resolvedOptions().timeZone && <div className="hint">일별 집계 기준: {snapshotTimeZone} · PC 시간대</div>}
     <div className="snapshot-footer">
       <span>{state.offline ? "오프라인 · 저장된 기록을 보고 있어요. " : ""}{stale ? "오래된 캡처예요. " : ""}한도와 예측은 캡처 시점을 기준으로 계산해요.</span>
-      {state.mode === "cloud" && state.needsReconnect && <button className="btn primary" disabled={state.busy || state.offline}
-        onClick={() => void cloud.signIn().catch(() => {})}>구글 다시 연결</button>}
+      {state.mode === "cloud" && state.needsReconnect && (state.provider === "github"
+        ? <button className="btn primary" onClick={onSettings}>GitHub 토큰 다시 입력</button>
+        : <button className="btn primary" disabled={state.busy || state.offline}
+          onClick={() => void cloud.signIn().catch(() => {})}>구글 다시 연결</button>)}
       {state.mode === "cloud" && state.authenticated && <button className="btn" disabled={requesting || state.busy || state.offline || !state.selectedDeviceId}
         onClick={() => void request()}>{requesting ? "요청 중…" : "PC에 최신 한도 요청"}</button>}
     </div>

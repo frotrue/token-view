@@ -162,6 +162,14 @@ async fn cloud_sign_in(state: State<'_, AppState>) -> Result<cloud::DesktopCloud
         .await.map_err(|_| "동기화 작업을 시작할 수 없어요".to_string())?
 }
 
+/// Uses a private GitHub repository (fine-grained token) instead of Google Drive.
+#[tauri::command]
+async fn cloud_connect_github(state: State<'_, AppState>, repo: String, token: String) -> Result<cloud::DesktopCloudStatus, String> {
+    let cloud = state.cloud.clone();
+    tauri::async_runtime::spawn_blocking(move || cloud.connect_github(repo, token))
+        .await.map_err(|_| "동기화 작업을 시작할 수 없어요".to_string())?
+}
+
 #[tauri::command]
 fn cloud_cancel_sign_in(state: State<AppState>) {
     state.cloud.cancel_sign_in();
@@ -426,6 +434,7 @@ pub fn run() {
             cloud_configure,
             cloud_sign_in,
             cloud_cancel_sign_in,
+            cloud_connect_github,
             cloud_sign_out,
             cloud_sync_now
         ])

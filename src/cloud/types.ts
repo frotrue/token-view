@@ -15,6 +15,7 @@ export interface CloudSnapshot {
 export interface CloudDevice { id: string; name: string; capturedAt: number; checkedAt: number }
 export interface DesktopCloudStatus {
   available: boolean; customClient: boolean; clientId: string; enabled: boolean;
+  provider: string; githubRepo: string;
   deviceId: string; deviceName: string; email: string | null; authenticated: boolean; signingIn: boolean;
   lastUploadAt: number | null; lastCheckAt: number | null; lastUploadBytes: number | null;
   lastError: string | null; persistentSession: boolean;
@@ -29,6 +30,8 @@ export interface CloudViewState {
   /** An account is remembered but its token expired: data stays, one tap reconnects. */
   needsReconnect: boolean;
   signingIn: boolean;
+  /** Which backend the connection uses. */
+  provider: 'google' | 'github' | null; githubRepo: string;
   email: string | null; deviceName: string; enabled: boolean;
   persistentSession: boolean; devices: CloudDevice[]; selectedDeviceId: string | null;
   busy: boolean; error: string | null; warning: string | null; offline: boolean;

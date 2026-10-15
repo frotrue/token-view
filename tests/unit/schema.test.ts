@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { makeDemoSnapshot } from '../../src/cloud/demo';
 import { parseDashboard, parseSnapshot, sharedSettings } from '../../src/cloud/schema';
 import { validClientId } from '../../src/cloud/google';
+import { validRepo, validToken } from '../../src/cloud/github';
 
 describe('untrusted cloud and file data', () => {
   it('reads a full fixture emitted by the native Rust snapshot sanitizer', () => {
@@ -44,5 +45,14 @@ describe('Google OAuth client configuration', () => {
   it('accepts only Google OAuth client ids', () => {
     expect(validClientId('1234-abc.apps.googleusercontent.com')).toBe(true);
     for (const id of ['', 'https://evil.example', 'abc.apps.googleusercontent.com.evil.example', 'a b.apps.googleusercontent.com']) expect(validClientId(id)).toBe(false);
+  });
+});
+describe('GitHub repository configuration', () => {
+  it('accepts owner/name repositories and fine-grained or classic tokens only', () => {
+    expect(validRepo('frotrue/token-view-data')).toBe(true);
+    for (const repo of ['', 'noslash', 'a/b/c', 'a/.git', 'a b/c', '../x']) expect(validRepo(repo)).toBe(false);
+    expect(validToken('github_pat_11ABCDEF0123456789abcdef')).toBe(true);
+    expect(validToken('ghp_0123456789abcdefghijAB')).toBe(true);
+    for (const token of ['', 'gho_0123456789abcdefghij', 'github_pat_with space 0123456789']) expect(validToken(token)).toBe(false);
   });
 });
