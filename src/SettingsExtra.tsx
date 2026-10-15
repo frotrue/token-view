@@ -79,8 +79,8 @@ export function StartupCard() {
 function LiveLine({ label, r, off }: { label: string; r?: LiveResult | null; off: boolean }) {
   let text: ReactNode = "아직 조회 전";
   if (off) text = <span className="muted">꺼짐</span>;
-  else if (r?.ok) text = <>✓ {fmtAgo(r.ts)} 조회</>;
-  else if (r && !r.ok) text = <span style={{ color: "var(--critical)" }}>{r.error}</span>;
+  else if (r?.ok) text = <>✓ {fmtAgo(r.ts)} 조회{r.lastErrorTs && <span className="muted"> · {fmtAgo(r.lastErrorTs)} 실패했었음{r.lastError ? `: ${r.lastError}` : ""}</span>}</>;
+  else if (r && !r.ok) text = <><span style={{ color: "var(--critical)" }}>{r.error}</span>{r.lastOk && <span className="muted"> · 마지막 성공 {fmtAgo(r.lastOk)}</span>}</>;
   return (
     <>
       <dt>{label}</dt>

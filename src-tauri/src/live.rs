@@ -55,6 +55,23 @@ fn window_minutes(name: &str) -> i64 {
     }
 }
 
+/// Short, non-identifying category of a live-query failure (safe to sync).
+pub fn failure_reason(error: &str) -> &'static str {
+    if error.contains("429") {
+        "rate_limited"
+    } else if error.contains("만료") {
+        "expired"
+    } else if error.contains("로그인 정보를 찾지") || error.contains("구독 계정") || error.contains("토큰 없음") {
+        "no_login"
+    } else if error.contains("한도 정보를 찾지") {
+        "format"
+    } else if error.contains("응답 ") {
+        "http"
+    } else {
+        "network"
+    }
+}
+
 // ---------- Claude: OAuth usage endpoint (opt-in) ----------
 
 fn claude_credentials() -> std::path::PathBuf {

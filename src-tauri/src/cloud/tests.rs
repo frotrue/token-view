@@ -703,3 +703,18 @@ fn rejected_github_token_signs_out_and_never_reports_the_token() {
     assert!(!serde_json::to_string(&handle.status()).unwrap().contains(PAT));
     join.join().unwrap();
 }
+
+#[test]
+fn live_failures_sync_only_a_known_reason_and_the_last_success() {
+    let live = json!({
+        "claude": {"ok": false, "ts": 5, "error": "Anthropic 응답 429 private", "reason": "rate_limited", "lastOk": 3, "lastErrorTs": 5},
+        "codex": {"ok": false, "ts": 5, "error": "x", "reason": "made_up"},
+    });
+    let out = super::payload::live_payload(&live);
+    assert_eq!(out["claude"], json!({"ts": 5, "ok": false, "lastOk": 3, "reason": "rate_limited"}));
+    assert!(out["codex"].get("reason").is_none());
+    assert_eq!(crate::live::failure_reason("Anthropic 응답 429"), "rate_limited");
+    assert_eq!(crate::live::failure_reason("로그인 토큰이 만료됐어요"), "expired");
+    assert_eq!(crate::live::failure_reason("Anthropic 응답 500"), "http");
+    assert_eq!(crate::live::failure_reason("io: timed out"), "network");
+}

@@ -25,11 +25,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # Browser tests run against a build without a Google client (they mock it).
       - run: npm run build
-        env:
-          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+      - name: Build the deployable site with the Google client
+        run: npm run build
+        env:
+          VITE_GOOGLE_CLIENT_ID: ${{ vars.VITE_GOOGLE_CLIENT_ID }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

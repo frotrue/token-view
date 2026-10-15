@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, DEFAULT_SETTINGS, type Dashboard, type Live, type ScanStatus, type Sources, type UiSettings } from "./api";
+import { api, DEFAULT_SETTINGS, FAILURE_TEXT, type Dashboard, type Live, type ScanStatus, type Sources, type UiSettings } from "./api";
 import { cloud, getSnapshot, useCloud } from "./cloud";
 import { BrowserSupportCard, CloudPanel } from "./CloudPanel";
 import { buildLimitViews, dailySeries, project } from "./forecast";
@@ -237,7 +237,8 @@ function SnapshotBanner({ live, snapshotTimeZone, onSettings }: { live: Live; sn
   const [requesting, setRequesting] = useState(false);
   const selected = state.devices.find((device) => device.id === state.selectedDeviceId);
   const stale = !!state.capturedAt && Date.now() - state.capturedAt > 10 * 60_000;
-  const failedProviders = [live.claude?.ok === false ? "Claude" : "", live.codex?.ok === false ? "Codex" : ""].filter(Boolean);
+  const failedProviders = ([["Claude", live.claude], ["Codex", live.codex]] as const).flatMap(([name, r]) => r?.ok === false
+    ? [`${name}${r.reason ? `(${FAILURE_TEXT[r.reason]})` : ""}${r.lastOk ? ` · 마지막 성공 ${fmtAgo(r.lastOk)}` : ""}`] : []);
   const request = async () => {
     setRequesting(true); setError("");
     try { await cloud.requestRefresh(); }
@@ -264,7 +265,7 @@ function SnapshotBanner({ live, snapshotTimeZone, onSettings }: { live: Live; sn
         onClick={() => void request()}>{requesting ? "요청 중…" : "PC에 최신 한도 요청"}</button>}
     </div>
     {state.refreshRequestedAt && state.mode === "cloud" && <div className="hint" role="status">PC 요청 {fmtAgo(state.refreshRequestedAt)} · PC가 실행 중이고 온라인이면 수집 후 반영돼요. 요청은 10분 후 만료돼요.</div>}
-    {failedProviders.length > 0 && <div className="notice">{failedProviders.join(" · ")} 한도 조회 실패 · 마지막 확인값 표시</div>}
+    {failedProviders.length > 0 && <div className="notice">한도 조회 실패: {failedProviders.join(" / ")} · 마지막 확인값을 표시해요</div>}
     {(error || state.error) && <div className="notice" role="alert">{error || state.error}</div>}
     {state.warning && <div className="notice">{state.warning}</div>}
   </section>;

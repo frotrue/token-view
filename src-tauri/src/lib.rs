@@ -226,16 +226,34 @@ fn refresh_live(app: &AppHandle, force: bool) {
         }
         *last = now;
     }
-    let outcome = |r: Result<Value, String>| match r {
-        Ok(v) => json!({ "ok": true, "ts": now, "info": v }),
-        Err(e) => json!({ "ok": false, "ts": now, "error": e }),
+    let prev = state.live.lock().unwrap().clone();
+    // Keep the last success and the last failure (for an hour) so a transient
+    // error stays explainable after the next refresh succeeds.
+    let outcome = |key: &str, r: Result<Value, String>| {
+        let p = &prev[key];
+        let mut o = match r {
+            Ok(v) => json!({ "ok": true, "ts": now, "info": v, "lastOk": now }),
+            Err(e) => {
+                let mut o = json!({ "ok": false, "ts": now, "reason": live::failure_reason(&e), "error": e, "lastErrorTs": now });
+                if let Some(t) = p.get("lastOk").and_then(Value::as_i64) {
+                    o["lastOk"] = json!(t);
+                }
+                return o;
+            }
+        };
+        if let Some(t) = p.get("lastErrorTs").and_then(Value::as_i64).filter(|t| now - t < 3_600_000) {
+            let e = if p["ok"] == json!(false) { p.get("error") } else { p.get("lastError") };
+            o["lastErrorTs"] = json!(t);
+            o["lastError"] = e.cloned().unwrap_or(Value::Null);
+        }
+        o
     };
     let claude = if setting_bool(&ui, "claudeApi", false) {
-        outcome(live::claude_usage(&conn).map(|n| json!({ "windows": n })))
+        outcome("claude", live::claude_usage(&conn).map(|n| json!({ "windows": n })))
     } else {
         Value::Null
     };
-    let codex = if setting_bool(&ui, "codexLive", true) { outcome(live::codex_limits(&conn)) } else { Value::Null };
+    let codex = if setting_bool(&ui, "codexLive", true) { outcome("codex", live::codex_limits(&conn)) } else { Value::Null };
     let status = if setting_bool(&ui, "serviceStatus", true) { live::service_status() } else { Value::Null };
     *state.live.lock().unwrap() = json!({ "claude": claude, "codex": codex, "status": status });
 }

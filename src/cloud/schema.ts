@@ -36,7 +36,8 @@ const pricing = z.object({
 });
 const creditInfo = z.object({ hasCredits: z.boolean(), unlimited: z.boolean(), balance: text.nullable().optional() });
 const liveInfo = z.object({ windows: number.optional(), ts: timestamp.nullable().optional(), planType: text.nullable().optional(), credits: creditInfo.nullable().optional(), resetCredits: number.nullable().optional(), reached: text.nullable().optional() });
-const liveResult = z.object({ ok: z.boolean(), ts: timestamp, error: z.string().max(200).optional(), info: liveInfo.optional() });
+const liveResult = z.object({ ok: z.boolean(), ts: timestamp, error: z.string().max(200).optional(), info: liveInfo.optional(), lastOk: timestamp.optional(),
+  reason: z.enum(['rate_limited', 'expired', 'no_login', 'format', 'http', 'network']).optional() });
 const live = z.object({
   claude: liveResult.nullable().optional(), codex: liveResult.nullable().optional(),
   status: z.object({ ts: timestamp, pages: rows(z.object({ id: text, name: text, url: z.string().url().refine((v) => v.startsWith('https://')), indicator: z.enum(['none', 'minor', 'major', 'critical', 'maintenance', 'unknown']), description: text }), 10) }).nullable().optional(),

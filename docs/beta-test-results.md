@@ -8,7 +8,7 @@ Run date: 2026-10-15. Host: Windows 11, Node 24, Rust stable. Browser: installed
 | --- | --- | --- |
 | Frontend unit | `npm test` | 10 passed |
 | Browser | `npm run test:e2e` | 36 passed (18 workflows × 2 viewports) |
-| Native | `cargo test --locked --all-targets --manifest-path src-tauri/Cargo.toml` | 22 passed |
+| Native | `cargo test --locked --all-targets --manifest-path src-tauri/Cargo.toml` | 24 passed |
 | Build | `npm run build`, `cargo build` | passed |
 
 Measured upload size on a real 4.9 GB-log database: snapshot JSON 594 KB → **94 KB gzip** (`cargo run --release --example cloud_size -- <usage.db>`).

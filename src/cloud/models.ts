@@ -59,12 +59,27 @@ export interface SessionRow extends TokenSums {
   models: string;
 }
 
+export type LiveFailure = 'rate_limited' | 'expired' | 'no_login' | 'format' | 'http' | 'network';
 export interface LiveResult {
   ok: boolean;
   ts: number;
   error?: string;
   info?: Record<string, unknown>;
+  /** Last successful query (kept across failures). */
+  lastOk?: number;
+  reason?: LiveFailure;
+  /** Desktop only: a failure within the last hour, shown after a later success. */
+  lastError?: string | null;
+  lastErrorTs?: number;
 }
+export const FAILURE_TEXT: Record<LiveFailure, string> = {
+  rate_limited: '요청이 많아 잠시 막힘',
+  expired: '로그인 토큰 만료',
+  no_login: '로그인 정보 없음',
+  format: '응답 형식이 바뀜',
+  http: '서버 오류',
+  network: '연결 실패',
+};
 export interface StatusPage {
   id: string;
   name: string;

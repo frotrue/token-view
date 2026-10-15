@@ -236,6 +236,14 @@ pub fn live_payload(v: &Value) -> Value {
                 "ok".into(),
                 json!(r.get("ok").and_then(Value::as_bool).unwrap_or(false)),
             );
+            if let Some(t) = r.get("lastOk").and_then(Value::as_i64).filter(|t| *t > 0) {
+                result.insert("lastOk".into(), json!(t));
+            }
+            if let Some(reason) = r.get("reason").and_then(Value::as_str).filter(|s| {
+                matches!(*s, "rate_limited" | "expired" | "no_login" | "format" | "http" | "network")
+            }) {
+                result.insert("reason".into(), json!(reason));
+            }
             if let Some(info) = r.get("info").filter(|v| v.is_object()) {
                 let mut i = if k == "codex" {
                     codex_info(info).as_object().unwrap().clone()
