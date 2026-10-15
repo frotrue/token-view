@@ -1,6 +1,6 @@
 [package]
 name = "token-view"
-version = "0.2.0"
+version = "0.3.0-beta.1"
 description = "Claude Code + Codex token usage monitor"
 edition = "2021"
 
@@ -23,10 +23,18 @@ memchr = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 ureq = "3"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+base64 = "0.22"
+iana-time-zone = "0.1"
 tauri-plugin-notification = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
+
+[target.'cfg(windows)'.dependencies]
+keyring = { version = "3", features = ["windows-native"] }
 
 [profile.release]
 opt-level = 3

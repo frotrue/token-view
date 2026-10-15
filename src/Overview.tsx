@@ -2,29 +2,29 @@ import { useMemo, useState } from "react";
 import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Line, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { totalTokens, type Source } from "./api";
 import { buildLimitViews, dailySeries, monthCurve, project, type Metric, type Projection } from "./forecast";
-import { addDays, dayKey, fmtDate, fmtShortDate, fmtTokens, parseDay } from "./format";
+import { addDays, calendarDateAt, dayKey, fmtDate, fmtShortDate, fmtTokens, parseDay } from "./format";
 import { LimitCard } from "./LimitCard";
 import { Card, Kpi, Seg, SrcDot, TipBox, useApp } from "./ui";
 
 const SOURCES: Source[] = ["claude", "codex"];
 
 export function useProjections(metric: Metric) {
-  const { data, settings } = useApp();
+  const { data, settings, snapshotAt, snapshotTimeZone } = useApp();
   return useMemo(() => {
     const budgetFor = (s: "all" | Source) =>
       metric !== "cost" ? null : s === "all" ? settings.monthlyBudget : s === "claude" ? settings.budgetClaude : settings.budgetCodex;
     const out = {} as Record<"all" | Source, { series: Map<string, number>; p: Projection }>;
     for (const s of ["all", ...SOURCES] as const) {
       const series = dailySeries(data.daily, metric, s);
-      out[s] = { series, p: project(series, budgetFor(s)) };
+      out[s] = { series, p: project(series, budgetFor(s), snapshotAt === undefined ? undefined : calendarDateAt(snapshotAt, snapshotTimeZone)) };
     }
     return out;
-  }, [data, settings, metric]);
+  }, [data, settings, metric, snapshotAt, snapshotTimeZone]);
 }
 
 export function Overview() {
-  const { data, money } = useApp();
-  const limits = useMemo(() => buildLimitViews(data), [data]);
+  const { data, money, snapshotAt, snapshotTimeZone } = useApp();
+  const limits = useMemo(() => buildLimitViews(data, snapshotAt), [data, snapshotAt]);
   const cost = useProjections("cost");
   const tok = useProjections("tokens");
 
@@ -35,7 +35,7 @@ export function Overview() {
   const bySrc = (s: Source) => data.totals.find((r) => r.source === s);
   const pc = cost.all.p;
   // Compare today with what an average day had spent by this time of day.
-  const now = new Date();
+  const now = calendarDateAt(snapshotAt ?? Date.now(), snapshotTimeZone);
   const dayFrac = Math.max((now.getHours() * 60 + now.getMinutes()) / 1440, 1 / 24);
   const todayVsAvg = pc.avg7 > 0 ? (pc.today / (pc.avg7 * dayFrac) - 1) * 100 : null;
 
@@ -57,13 +57,13 @@ export function Overview() {
           value={money(totalCost)}
           detail={
             <>
-              <span>{isFinite(first) ? `${fmtDate(dayKey(new Date(first)))}부터` : "-"}</span>
+              <span>{isFinite(first) ? `${fmtDate(dayKey(calendarDateAt(first, snapshotTimeZone)))}부터` : "-"}</span>
               <span>요청 {requests.toLocaleString("ko-KR")}회</span>
             </>
           }
         />
         <Kpi
-          label="이번 달 (API 환산)"
+          label={snapshotAt === undefined ? "이번 달 (API 환산)" : `${now.getMonth() + 1}월 · 캡처 기준 (API 환산)`}
           value={money(pc.mtd)}
           detail={
             <>
@@ -76,14 +76,14 @@ export function Overview() {
           }
         />
         <Kpi
-          label="오늘"
+          label={snapshotAt === undefined ? "오늘" : "캡처 당일"}
           value={money(pc.today)}
           detail={
             <>
               <span>{fmtTokens(tok.all.p.today)} 토큰</span>
               {todayVsAvg !== null && (
                 <span className={todayVsAvg > 0 ? "delta-up" : "delta-down"}>
-                  평소 이 시각 대비 {todayVsAvg > 0 ? "+" : ""}
+                  {snapshotAt === undefined ? "평소 이 시각 대비" : "평소 캡처 시각 대비"} {todayVsAvg > 0 ? "+" : ""}
                   {todayVsAvg.toFixed(0)}%
                 </span>
               )}
@@ -100,7 +100,7 @@ export function Overview() {
           ))}
         </div>
       ) : (
-        <div className="notice info">아직 한도 데이터가 없어요. Codex는 다음 사용 때, Claude는 상태줄이 갱신될 때 수집됩니다.</div>
+        <div className="notice info">{snapshotAt === undefined ? "아직 한도 데이터가 없어요. Codex는 다음 사용 때, Claude는 상태줄이 갱신될 때 수집됩니다." : "이 PC 캡처에는 한도 데이터가 없어요. PC에서 한도 수집을 설정하고 최신 캡처를 동기화해 주세요."}</div>
       )}
 
       <DailyChart />
@@ -114,14 +114,14 @@ export function Overview() {
 }
 
 function DailyChart() {
-  const { data, colors, money } = useApp();
+  const { data, colors, money, snapshotAt, snapshotTimeZone } = useApp();
   const [metric, setMetric] = useState<Metric>("cost");
   const [range, setRange] = useState<number>(30);
   const proj = useProjections(metric);
   const fmt = (x: number) => (metric === "cost" ? money(x, true) : fmtTokens(x));
 
   const rows = useMemo(() => {
-    const now = new Date();
+    const now = calendarDateAt(snapshotAt ?? Date.now(), snapshotTimeZone);
     const todayKey = dayKey(now);
     const firstKey = proj.all.p.firstDate ?? todayKey;
     let start = range > 0 ? addDays(now, -(range - 1)) : parseDay(firstKey);
@@ -140,12 +140,12 @@ function DailyChart() {
       out.push(row);
     }
     return out;
-  }, [proj, range, data]);
+  }, [proj, range, data, snapshotAt, snapshotTimeZone]);
 
   return (
     <Card
       title="일별 사용량"
-      sub="이번 달 남은 기간은 최근 7일 평균으로 예측"
+      sub={snapshotAt === undefined ? "이번 달 남은 기간은 최근 7일 평균으로 예측" : "캡처 시점 이후는 당시 최근 7일 평균으로 예측"}
       right={
         <div className="row">
           <Seg value={metric} onChange={setMetric} options={[["cost", "비용"], ["tokens", "토큰"]]} />
@@ -188,7 +188,7 @@ function DailyChart() {
                     ["Codex", fmt(r.codex ?? 0), colors.codex],
                     ["합계", fmt((r.claude ?? 0) + (r.codex ?? 0))],
                   ];
-              if (!future && r.claudeF != null) rows.push(["오늘 남은 예측", fmt((r.claudeF ?? 0) + (r.codexF ?? 0))]);
+              if (!future && r.claudeF != null) rows.push([snapshotAt === undefined ? "오늘 남은 예측" : "캡처 당일 남은 예측", fmt((r.claudeF ?? 0) + (r.codexF ?? 0))]);
               return <TipBox title={fmtDate(String(label)) + (future ? " · 예측" : "")} rows={rows} />;
             }}
           />
@@ -203,16 +203,16 @@ function DailyChart() {
 }
 
 function MonthChart() {
-  const { colors, money } = useApp();
+  const { colors, money, snapshotAt, snapshotTimeZone } = useApp();
   const [metric, setMetric] = useState<Metric>("cost");
   const proj = useProjections(metric);
   const fmt = (x: number) => (metric === "cost" ? money(x, true) : fmtTokens(x));
-  const rows = useMemo(() => monthCurve(proj.all.series, proj.all.p), [proj]);
+  const rows = useMemo(() => monthCurve(proj.all.series, proj.all.p, snapshotAt === undefined ? undefined : calendarDateAt(snapshotAt, snapshotTimeZone)), [proj, snapshotAt, snapshotTimeZone]);
   const budget = proj.all.p.budget;
-  const now = new Date();
+  const now = calendarDateAt(snapshotAt ?? Date.now(), snapshotTimeZone);
   return (
     <Card
-      title={`${now.getMonth() + 1}월 누적`}
+      title={`${now.getMonth() + 1}월 누적${snapshotAt === undefined ? "" : " · 캡처 기준"}`}
       sub={`월말 예상 ${fmt(proj.all.p.projectedMonth)}${proj.all.p.monthRange ? ` · 범위 ${fmt(proj.all.p.monthRange[0])}~${fmt(proj.all.p.monthRange[1])}` : ""}`}
       right={<Seg value={metric} onChange={setMetric} options={[["cost", "비용"], ["tokens", "토큰"]]} />}
     >
@@ -258,7 +258,7 @@ function MonthChart() {
         <div className="status" style={{ marginTop: 8 }}>
           <span className="ico" style={{ background: colors.critical, color: "#fff" }}>!</span>
           <div>
-            {proj.all.p.budgetHit.already ? "이번 달 예산을 이미 넘었어요" : <>현재 속도면 <b>{fmtDate(proj.all.p.budgetHit.date)}</b>에 월 예산 도달 예상</>}
+            {proj.all.p.budgetHit.already ? (snapshotAt === undefined ? "이번 달 예산을 이미 넘었어요" : "캡처 당시 월 예산을 이미 넘었어요") : <>{snapshotAt === undefined ? "현재 속도면" : "캡처 당시 속도면"} <b>{fmtDate(proj.all.p.budgetHit.date)}</b>에 월 예산 도달 예상</>}
           </div>
         </div>
       )}
@@ -267,14 +267,14 @@ function MonthChart() {
 }
 
 function ProjectionTable() {
-  const { money } = useApp();
+  const { money, snapshotAt } = useApp();
   const [metric, setMetric] = useState<Metric>("cost");
   const proj = useProjections(metric);
   const fmt = (x: number) => (metric === "cost" ? money(x) : fmtTokens(x));
   const cols = ["all", "claude", "codex"] as const;
   const rows: [string, (p: Projection) => number][] = [
-    ["오늘 (지금까지)", (p) => p.today],
-    ["어제", (p) => p.yesterday],
+    [snapshotAt === undefined ? "오늘 (지금까지)" : "캡처 당일", (p) => p.today],
+    [snapshotAt === undefined ? "어제" : "캡처 전날", (p) => p.yesterday],
     ["최근 7일 일평균", (p) => p.avg7],
     ["최근 30일 일평균", (p) => p.avg30],
     ["이번 달 누적", (p) => p.mtd],
@@ -285,7 +285,7 @@ function ProjectionTable() {
   ];
   const trend = proj.all.p.prevAvg7 > 0 ? (proj.all.p.avg7 / proj.all.p.prevAvg7 - 1) * 100 : null;
   return (
-    <Card title="예측 요약" right={<Seg value={metric} onChange={setMetric} options={[["cost", "비용"], ["tokens", "토큰"]]} />}>
+    <Card title="예측 요약" sub={snapshotAt === undefined ? undefined : "캡처 시점의 사용 패턴 기준"} right={<Seg value={metric} onChange={setMetric} options={[["cost", "비용"], ["tokens", "토큰"]]} />}>
       <div className="tbl-wrap">
         <table>
           <thead>

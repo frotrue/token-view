@@ -1,4 +1,5 @@
 mod db;
+mod cloud;
 mod export;
 mod live;
 mod pricing;
@@ -26,6 +27,7 @@ struct AppState {
     /// Results of the last live refresh (limits APIs, status pages).
     live: Mutex<Value>,
     last_live: Mutex<i64>,
+    cloud: cloud::CloudSync,
 }
 
 fn err<E: ToString>(e: E) -> String {
@@ -130,8 +132,45 @@ fn get_settings(state: State<AppState>) -> Result<Value, String> {
 
 #[tauri::command]
 fn set_settings(state: State<AppState>, settings: Value) -> Result<(), String> {
+    let _settings_lock = state.cloud.settings_lock();
     let conn = db::open(&state.db_path).map_err(err)?;
-    db::set_setting(&conn, "ui", &settings.to_string()).map_err(err)
+    let previous = cloud::shared_settings(&ui_settings(&conn));
+    db::set_setting(&conn, "ui", &settings.to_string()).map_err(err)?;
+    if previous != cloud::shared_settings(&settings) {
+        state.cloud.settings_changed(&settings)?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn cloud_status(state: State<AppState>) -> cloud::DesktopCloudStatus {
+    state.cloud.status()
+}
+
+#[tauri::command]
+async fn cloud_configure(state: State<'_, AppState>, url: String, anon_key: String, device_name: String, enabled: bool) -> Result<cloud::DesktopCloudStatus, String> {
+    let cloud = state.cloud.clone();
+    tauri::async_runtime::spawn_blocking(move || cloud.configure(url, anon_key, device_name, enabled))
+        .await.map_err(|_| "Cloud worker is unavailable".to_string())?
+}
+
+#[tauri::command]
+async fn cloud_sign_in(state: State<'_, AppState>, email: String, password: String) -> Result<cloud::DesktopCloudStatus, String> {
+    let cloud = state.cloud.clone();
+    tauri::async_runtime::spawn_blocking(move || cloud.sign_in(email, password))
+        .await.map_err(|_| "Cloud worker is unavailable".to_string())?
+}
+
+#[tauri::command]
+async fn cloud_sign_out(state: State<'_, AppState>) -> Result<cloud::DesktopCloudStatus, String> {
+    let cloud = state.cloud.clone();
+    tauri::async_runtime::spawn_blocking(move || cloud.sign_out())
+        .await.map_err(|_| "Cloud worker is unavailable".to_string())?
+}
+
+#[tauri::command]
+fn cloud_sync_now(state: State<AppState>) -> Result<cloud::DesktopCloudStatus, String> {
+    state.cloud.sync_now(&state.trigger.lock().unwrap())
 }
 
 #[tauri::command]
@@ -199,10 +238,31 @@ fn start_scanner(app: AppHandle, rx: std::sync::mpsc::Receiver<()>) {
         if let Ok(conn) = db::open(&db_path) {
             let _ = remote::refresh(&conn, false); // offline is fine: keep the last table
         }
-        refresh_live(&app, false);
+        let requested_refresh = state.cloud.take_refresh_request();
+        refresh_live(&app, requested_refresh.is_some());
         let result = scan::run_scan(&db_path, &mut report);
         *state.status.lock().unwrap() = result.clone();
-        let _ = app.emit("data-updated", result);
+        let _ = app.emit("data-updated", result.clone());
+        if result.last_error.is_empty() {
+            if let Some(context) = state.cloud.snapshot_context() {
+                if let Ok(conn) = db::open(&db_path) {
+                    if let Ok(dashboard) = stats::dashboard(&conn) {
+                        let mut live = state.live.lock().unwrap().clone();
+                        if let Some(info) = db::get_setting(&conn, "codex_live").and_then(|s| serde_json::from_str::<Value>(&s).ok()) {
+                            live["codexInfo"] = info;
+                        }
+                        let hooked = statusline::status().get("connected").and_then(Value::as_bool).unwrap_or(false);
+                        state.cloud.publish(context, result.last_scan_ms, dashboard, pricing_info(&conn), ui_settings(&conn), live, hooked, requested_refresh.clone());
+                    } else {
+                        state.cloud.return_refresh_request(requested_refresh);
+                    }
+                } else {
+                    state.cloud.return_refresh_request(requested_refresh);
+                }
+            }
+        } else {
+            state.cloud.return_refresh_request(requested_refresh);
+        }
         let secs = db::open(&db_path)
             .ok()
             .and_then(|c| ui_settings(&c).get("refreshSecs").and_then(|v| v.as_u64()))
@@ -279,12 +339,17 @@ pub fn run() {
             let db_path = dir.join("usage.db");
             db::open(&db_path)?;
             let (tx, rx) = channel();
+            let cloud_app = app.handle().clone();
+            let cloud = cloud::CloudSync::start(db_path.clone(), tx.clone(), std::sync::Arc::new(move |event| {
+                let _ = cloud_app.emit(event, ());
+            }));
             app.manage(AppState {
                 db_path,
                 status: Mutex::new(ScanStatus::default()),
                 trigger: Mutex::new(tx),
                 live: Mutex::new(json!({})),
                 last_live: Mutex::new(0),
+                cloud,
             });
 
             // Started with Windows (autostart passes --minimized): stay in the tray.
@@ -350,7 +415,12 @@ pub fn run() {
             get_live,
             refresh_live_now,
             update_tray,
-            export_data
+            export_data,
+            cloud_status,
+            cloud_configure,
+            cloud_sign_in,
+            cloud_sign_out,
+            cloud_sync_now
         ])
         .run(tauri::generate_context!())
         .expect("error while running Token View");

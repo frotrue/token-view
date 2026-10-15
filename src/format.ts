@@ -28,6 +28,24 @@ export function makeMoney(s: Pick<UiSettings, "currency" | "krwRate">) {
 }
 export type Money = ReturnType<typeof makeMoney>;
 
+/** Calendar-only reference for daily aggregates captured in the PC's timezone.
+ * The returned Date has the PC calendar fields in the viewer's local timezone;
+ * never use its epoch value for absolute timestamps or limit windows.
+ */
+export function calendarDateAt(ms: number, timeZone?: string): Date {
+  if (!timeZone) return new Date(ms);
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone, year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+    }).formatToParts(new Date(ms));
+    const value = (name: string) => Number(parts.find((part) => part.type === name)?.value);
+    return new Date(value("year"), value("month") - 1, value("day"), value("hour"), value("minute"), value("second"));
+  } catch {
+    return new Date(ms);
+  }
+}
+
 const DOW = ["일", "월", "화", "수", "목", "금", "토"];
 
 export function fmtDate(d: string | Date): string {

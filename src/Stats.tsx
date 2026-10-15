@@ -1,7 +1,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { totalTokens, type Source, type TokenSums } from "./api";
 import { buildBlocks, type Metric, type SourceFilter } from "./forecast";
-import { addDays, dayKey, fmtDateTime, fmtDuration, fmtInt, fmtTokens, parseDay, projectName } from "./format";
+import { addDays, calendarDateAt, dayKey, fmtDateTime, fmtDuration, fmtInt, fmtTokens, projectName } from "./format";
 import { Card, Seg, SrcDot, srcColor, useApp } from "./ui";
 
 const zero = (): TokenSums => ({ input: 0, cacheWrite: 0, cacheRead: 0, output: 0, reasoning: 0, cost: 0, requests: 0 });
@@ -16,12 +16,14 @@ const add = (a: TokenSums, b: TokenSums) => {
 };
 
 export function Stats() {
+  const { snapshotAt, snapshotTimeZone } = useApp();
   const [range, setRange] = useState(30);
   const [src, setSrc] = useState<SourceFilter>("all");
-  const since = range > 0 ? dayKey(addDays(new Date(), -(range - 1))) : "";
+  const since = range > 0 ? dayKey(addDays(calendarDateAt(snapshotAt ?? Date.now(), snapshotTimeZone), -(range - 1))) : "";
   const keep = (r: { date: string; source: Source }) => r.date >= since && (src === "all" || r.source === src);
   return (
     <div className="page">
+      {snapshotAt !== undefined && <div className="hint">기간은 PC 캡처일을 기준으로 표시해요.</div>}
       <div className="row">
         <Seg value={range} onChange={setRange} options={[[1, "오늘"], [7, "7일"], [30, "30일"], [90, "90일"], [0, "전체"]]} />
         <Seg value={src} onChange={setSrc} options={[["all", "전체"], ["claude", "Claude Code"], ["codex", "Codex"]]} />
@@ -73,7 +75,7 @@ function Composition({ keep }: { keep: Keep }) {
             }
             sub={`${fmtTokens(total, 2)} · ${money(t.cost)} · 요청 ${fmtInt(t.requests)}회`}
           >
-            <table>
+            <div className="tbl-wrap"><table>
               <tbody>
                 {rows.map(([label, k, hint]) => {
                   const v = t[k] as number;
@@ -90,7 +92,7 @@ function Composition({ keep }: { keep: Keep }) {
                   );
                 })}
               </tbody>
-            </table>
+            </table></div>
             <div className="muted" style={{ fontSize: 12.5, marginTop: 8 }}>
               캐시 적중률 <b style={{ color: "var(--ink)" }}>{hit.toFixed(1)}%</b> · 추론 토큰 {fmtTokens(t.reasoning)} · 요청당 평균 {fmtTokens(t.requests ? total / t.requests : 0)} 토큰
             </div>
@@ -232,18 +234,18 @@ function ProjectTable({ keep }: { keep: Keep }) {
 const DOW = ["월", "화", "수", "목", "금", "토", "일"];
 
 function Heatmap({ src }: { src: SourceFilter }) {
-  const { data, colors, money } = useApp();
+  const { data, colors, money, snapshotTimeZone } = useApp();
   const [metric, setMetric] = useState<Metric>("cost");
   const grid = useMemo(() => {
     const g = Array.from({ length: 7 }, () => new Array<number>(24).fill(0));
     for (const r of data.hourly) {
       if (src !== "all" && r.source !== src) continue;
-      const d = new Date(r.hour);
+      const d = calendarDateAt(r.hour, snapshotTimeZone);
       const dow = (d.getDay() + 6) % 7;
       g[dow][d.getHours()] += metric === "cost" ? r.cost : totalTokens(r);
     }
     return g;
-  }, [data, src, metric]);
+  }, [data, src, metric, snapshotTimeZone]);
   const max = Math.max(1e-9, ...grid.flat());
   const fmt = (x: number) => (metric === "cost" ? money(x) : fmtTokens(x));
   const busiest = grid
@@ -256,7 +258,7 @@ function Heatmap({ src }: { src: SourceFilter }) {
       sub="최근 35일 합계"
       right={<Seg value={metric} onChange={setMetric} options={[["cost", "비용"], ["tokens", "토큰"]]} />}
     >
-      <div className="heat">
+      <div className="heat-scroll"><div className="heat">
         <span />
         {Array.from({ length: 24 }, (_, h) => (
           <span key={h} className="hl">
@@ -278,7 +280,7 @@ function Heatmap({ src }: { src: SourceFilter }) {
             ))}
           </Fragment>
         ))}
-      </div>
+      </div></div>
       <div className="muted" style={{ fontSize: 12.5, marginTop: 10 }}>
         가장 많이 쓰는 시간: {busiest.filter((b) => b.v > 0).map((b) => `${DOW[b.d]} ${b.h}시`).join(", ") || "-"}
       </div>
@@ -287,9 +289,8 @@ function Heatmap({ src }: { src: SourceFilter }) {
 }
 
 function SessionTable({ since, src }: { since: string; src: SourceFilter }) {
-  const { data, money } = useApp();
-  const from = since ? parseDay(since).getTime() : 0;
-  const rows = data.sessions.filter((r) => r.lastTs >= from && (src === "all" || r.source === src));
+  const { data, money, snapshotTimeZone } = useApp();
+  const rows = data.sessions.filter((r) => (!since || dayKey(calendarDateAt(r.lastTs, snapshotTimeZone)) >= since) && (src === "all" || r.source === src));
   return (
     <Card title="세션별" sub={`${rows.length}개 · 최근 35일까지`}>
       {rows.length === 0 ? (
@@ -332,11 +333,10 @@ function SessionTable({ since, src }: { since: string; src: SourceFilter }) {
 }
 
 function BlockTable({ since }: { since: string }) {
-  const { data, money, colors } = useApp();
-  const from = since ? parseDay(since).getTime() : 0;
-  const blocks = useMemo(() => buildBlocks(data.fine, data.limits, "claude"), [data]).filter((b) => b.end >= from);
+  const { data, money, colors, snapshotAt, snapshotTimeZone } = useApp();
+  const blocks = useMemo(() => buildBlocks(data.fine, data.limits, "claude"), [data]).filter((b) => !since || dayKey(calendarDateAt(b.end, snapshotTimeZone)) >= since);
   const max = Math.max(1e-9, ...blocks.map((b) => b.cost));
-  const now = Date.now();
+  const now = snapshotAt ?? Date.now();
   return (
     <Card title="Claude 5시간 블록" sub="첫 요청부터 5시간씩 묶은 사용 구간">
       {blocks.length === 0 ? (
@@ -362,7 +362,7 @@ function BlockTable({ since }: { since: string }) {
                   <tr key={b.start}>
                     <td>
                       {fmtDateTime(b.start)}
-                      {active && <b style={{ marginLeft: 6 }}>진행 중</b>}
+                      {active && <b style={{ marginLeft: 6 }}>{snapshotAt === undefined ? "진행 중" : "캡처 당시 진행 중"}</b>}
                       {b.hitLimit && (
                         <span title="이 블록에서 한도에 도달했어요" style={{ marginLeft: 6, color: "var(--critical)" }}>
                           ● 한도 도달

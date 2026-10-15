@@ -5,3 +5,9 @@ src-tauri/gen
 .dev
 tsconfig.tsbuildinfo
 .claude
+.env
+.env.*
+!.env.example
+playwright-report
+test-results
+coverage

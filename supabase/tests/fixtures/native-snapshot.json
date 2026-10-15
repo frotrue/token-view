@@ -1,0 +1,205 @@
+{
+  "schemaVersion": 1,
+  "device": {
+    "id": "6f2165bf-003f-4617-bd61-264f5ea70987",
+    "name": "Test PC"
+  },
+  "capturedAt": 1792022337076,
+  "timezone": "Etc/UTC",
+  "dashboard": {
+    "now": 1792022337076,
+    "totals": [
+      {
+        "input": 100,
+        "cacheWrite": 20,
+        "cacheRead": 30,
+        "output": 40,
+        "reasoning": 5,
+        "cost": 0.25,
+        "requests": 1,
+        "firstTs": 1792018737076,
+        "lastTs": 1792022337076,
+        "source": "claude"
+      }
+    ],
+    "daily": [
+      {
+        "input": 100,
+        "cacheWrite": 20,
+        "cacheRead": 30,
+        "output": 40,
+        "reasoning": 5,
+        "cost": 0.25,
+        "requests": 1,
+        "date": "2026-10-14",
+        "source": "claude"
+      }
+    ],
+    "dailyModel": [
+      {
+        "input": 100,
+        "cacheWrite": 20,
+        "cacheRead": 30,
+        "output": 40,
+        "reasoning": 5,
+        "cost": 0.25,
+        "requests": 1,
+        "date": "2026-10-14",
+        "source": "claude",
+        "model": "claude-sonnet-4"
+      }
+    ],
+    "dailyProject": [
+      {
+        "input": 100,
+        "cacheWrite": 20,
+        "cacheRead": 30,
+        "output": 40,
+        "reasoning": 5,
+        "cost": 0.25,
+        "requests": 1,
+        "date": "2026-10-14",
+        "source": "claude",
+        "project": "WorkProject [09159704]"
+      }
+    ],
+    "hourly": [
+      {
+        "input": 100,
+        "cacheWrite": 20,
+        "cacheRead": 30,
+        "output": 40,
+        "reasoning": 5,
+        "cost": 0.25,
+        "requests": 1,
+        "hour": 1792018800000,
+        "source": "claude"
+      }
+    ],
+    "fine": [
+      {
+        "input": 100,
+        "cacheWrite": 20,
+        "cacheRead": 30,
+        "output": 40,
+        "reasoning": 5,
+        "cost": 0.25,
+        "requests": 1,
+        "t": 1792021800000,
+        "source": "claude"
+      }
+    ],
+    "sessions": [
+      {
+        "input": 100,
+        "cacheWrite": 20,
+        "cacheRead": 30,
+        "output": 40,
+        "reasoning": 5,
+        "cost": 0.25,
+        "requests": 1,
+        "firstTs": 1792018737076,
+        "lastTs": 1792022337076,
+        "source": "claude",
+        "session": "bc7d64fc4752b5cefb42845517665f01b9746c0a9097a90dbd60a8affc24fb95",
+        "project": "WorkProject [09159704]",
+        "models": "claude-sonnet-4"
+      }
+    ],
+    "limits": [
+      {
+        "ts": 1792022337076,
+        "usedPct": 23.5,
+        "windowMinutes": 300,
+        "resetsAt": 1792025937076,
+        "source": "claude",
+        "limitId": "claude",
+        "win": "five_hour",
+        "plan": "pro"
+      }
+    ],
+    "unpriced": [
+      {
+        "requests": 1,
+        "tokens": 10,
+        "source": "codex",
+        "model": "synthetic-model"
+      }
+    ]
+  },
+  "pricing": {
+    "pricing": {
+      "version": "fixture-v1",
+      "entries": [
+        {
+          "input": 3.0,
+          "output": 15.0,
+          "cache_write_5m": 3.75,
+          "cache_write_1h": 6.0,
+          "cache_read": 0.3,
+          "long_ctx_threshold": 200000,
+          "long_input_mult": 2.0,
+          "long_output_mult": 1.5,
+          "model": "claude-sonnet-4"
+        }
+      ],
+      "fast_mult": 6.0,
+      "web_search_usd": 0.01
+    },
+    "custom": false,
+    "defaultVersion": "fixture-v1",
+    "builtinVersion": "fixture-v1",
+    "remoteUrl": "https://raw.githubusercontent.com/frotrue/token-view/main/pricing.json"
+  },
+  "settings": {
+    "currency": "KRW",
+    "krwRate": 1400,
+    "monthlyBudget": 200,
+    "budgetClaude": 150,
+    "budgetCodex": 50
+  },
+  "live": {
+    "claude": {
+      "ts": 1792022337076,
+      "ok": true,
+      "info": {
+        "windows": 2
+      }
+    },
+    "codex": {
+      "ts": 1792022337076,
+      "ok": false
+    },
+    "codexInfo": {
+      "ts": 1792022337076,
+      "resetCredits": null,
+      "planType": "plus",
+      "reached": null,
+      "credits": {
+        "hasCredits": true,
+        "unlimited": false,
+        "balance": "2.5"
+      }
+    },
+    "status": {
+      "ts": 1792022337076,
+      "pages": [
+        {
+          "id": "claude",
+          "name": "Claude",
+          "url": "https://status.claude.com",
+          "indicator": "none",
+          "description": "All systems operational"
+        },
+        {
+          "id": "openai",
+          "name": "OpenAI",
+          "url": "https://status.openai.com",
+          "indicator": "unknown",
+          "description": "Status available"
+        }
+      ]
+    }
+  },
+  "claudeHooked": true
+}

@@ -92,13 +92,17 @@ function LiveLine({ label, r, off }: { label: string; r?: LiveResult | null; off
 export function LiveCard({ s, setS, saveButton }: Edit) {
   const [live, setLive] = useState<Live>({});
   const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   useEffect(() => {
-    api.live().then(setLive);
+    api.live().then(setLive).catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, []);
   const now = async () => {
     setBusy(true);
+    setError("");
     try {
       setLive(await api.refreshLive());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(false);
     }
@@ -117,6 +121,7 @@ export function LiveCard({ s, setS, saveButton }: Edit) {
       }
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 10, fontSize: 13 }}>
+        {error && <div className="notice" role="alert">{error}</div>}
         <label className="check">
           <input type="checkbox" checked={s.codexLive} onChange={(e) => setS({ ...s, codexLive: e.target.checked })} />
           Codex: 설치된 Codex CLI에 현재 한도를 직접 물어보기
@@ -165,21 +170,25 @@ const EXPORTS: { kind: "events" | "daily" | "json"; label: string; name: string;
 
 export function ExportCard() {
   const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
   const run = async (e: (typeof EXPORTS)[number]) => {
-    const path = await saveDialog({ defaultPath: e.name, filters: [{ name: e.ext.toUpperCase(), extensions: [e.ext] }] });
-    if (!path) return;
+    setBusy(true);
     try {
+      const path = await saveDialog({ defaultPath: e.name, filters: [{ name: e.ext.toUpperCase(), extensions: [e.ext] }] });
+      if (!path) return;
       const n = await api.exportData(e.kind, path);
       setMsg(e.kind === "json" ? `저장했어요: ${path}` : `${fmtInt(n)}줄 저장했어요: ${path}`);
     } catch (err) {
       setMsg("저장 실패: " + String(err));
+    } finally {
+      setBusy(false);
     }
   };
   return (
     <Card title="내보내기">
       <div className="row">
         {EXPORTS.map((e) => (
-          <button key={e.kind} className="btn" disabled={!api.inTauri} onClick={() => run(e)}>
+          <button key={e.kind} className="btn" disabled={!api.inTauri || busy} onClick={() => void run(e)}>
             {e.label}
           </button>
         ))}

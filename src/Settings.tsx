@@ -1,25 +1,47 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { api, type PriceEntry, type Pricing, type PricingInfo, type Sources, type StatuslineStatus, type UiSettings } from "./api";
 import { fmtAgo, fmtTokens } from "./format";
 import { ExportCard, LiveCard, NotifyCard, StartupCard } from "./SettingsExtra";
+import { BrowserSupportCard, CloudPanel } from "./CloudPanel";
+import { useCloud } from "./cloud";
 import { Card, Seg, useApp } from "./ui";
 import type { useUpdater } from "./update";
 
 type Updater = ReturnType<typeof useUpdater>;
 
 export function Settings({ onSaved, sources, updater }: { onSaved: (s: UiSettings) => void; sources: Sources | null; updater: Updater }) {
-  const { settings, data } = useApp();
+  const { settings, data, snapshotTimeZone } = useApp();
+  const cloudState = useCloud();
+  const id = useId();
   const [s, setS] = useState<UiSettings>(settings);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+  const [saved, setSaved] = useState(false);
+  const persisted = useRef(JSON.stringify(settings));
+  useEffect(() => {
+    const previous = persisted.current;
+    setS((current) => JSON.stringify(current) === previous ? settings : current);
+    persisted.current = JSON.stringify(settings);
+  }, [settings]);
   const dirty = JSON.stringify(s) !== JSON.stringify(settings);
   const num = (v: string) => (v.trim() === "" ? null : Number(v));
+  const save = async () => {
+    setSaving(true); setSaveError(""); setSaved(false);
+    try { await api.setSettings(s); onSaved(s); setSaved(true); }
+    catch (err) { setSaveError(err instanceof Error ? err.message : String(err)); }
+    finally { setSaving(false); }
+  };
   const saveButton = (
-    <button className="btn primary" disabled={!dirty} onClick={() => api.setSettings(s).then(() => onSaved(s))}>
-      저장
+    <button className="btn primary" disabled={!dirty || saving || (!api.inTauri && !cloudState.hasData)} onClick={() => void save()}>
+      {saving ? "저장 중…" : "저장"}
     </button>
   );
 
   return (
     <div className="page">
+      <CloudPanel />
+      {saveError && <div className="notice" role="alert">설정을 저장하지 못했어요: {saveError}</div>}
+      {saved && !dirty && <div className="notice info" role="status">설정을 저장했어요.</div>}
       <div className="grid g2">
         <Card title="표시 · 예산" right={saveButton}>
           <div className="grid g2" style={{ gap: 14 }}>
@@ -28,37 +50,39 @@ export function Settings({ onSaved, sources, updater }: { onSaved: (s: UiSetting
               <Seg value={s.currency} onChange={(currency) => setS({ ...s, currency })} options={[["USD", "달러 ($)"], ["KRW", "원화 (₩)"]]} />
             </div>
             <div className="field">
-              <label>환율 (₩/$)</label>
-              <input className="inp" type="number" value={s.krwRate} onChange={(e) => setS({ ...s, krwRate: Number(e.target.value) || 0 })} />
+              <label htmlFor={`${id}-rate`}>환율 (₩/$)</label>
+              <input id={`${id}-rate`} className="inp" type="number" inputMode="decimal" min={1} value={s.krwRate} onChange={(e) => setS({ ...s, krwRate: Number(e.target.value) || 0 })} />
             </div>
             <div className="field">
-              <label>월 예산 · 전체 (USD)</label>
-              <input className="inp" type="number" placeholder="없음" value={s.monthlyBudget ?? ""} onChange={(e) => setS({ ...s, monthlyBudget: num(e.target.value) })} />
+              <label htmlFor={`${id}-budget`}>월 예산 · 전체 (USD)</label>
+              <input id={`${id}-budget`} className="inp" type="number" inputMode="decimal" min={0} placeholder="없음" value={s.monthlyBudget ?? ""} onChange={(e) => setS({ ...s, monthlyBudget: num(e.target.value) })} />
               <span className="hint">API 환산 비용 기준. 누적 차트와 도달일 예측에 쓰여요.</span>
             </div>
             <div className="field">
               <label>월 예산 · Claude / Codex (USD)</label>
               <div className="row" style={{ flexWrap: "nowrap" }}>
-                <input className="inp" type="number" placeholder="Claude" value={s.budgetClaude ?? ""} onChange={(e) => setS({ ...s, budgetClaude: num(e.target.value) })} />
-                <input className="inp" type="number" placeholder="Codex" value={s.budgetCodex ?? ""} onChange={(e) => setS({ ...s, budgetCodex: num(e.target.value) })} />
+                <input className="inp" type="number" inputMode="decimal" min={0} aria-label="Claude 월 예산 USD" placeholder="Claude" value={s.budgetClaude ?? ""} onChange={(e) => setS({ ...s, budgetClaude: num(e.target.value) })} />
+                <input className="inp" type="number" inputMode="decimal" min={0} aria-label="Codex 월 예산 USD" placeholder="Codex" value={s.budgetCodex ?? ""} onChange={(e) => setS({ ...s, budgetCodex: num(e.target.value) })} />
               </div>
             </div>
-            <div className="field">
+            {api.inTauri && <div className="field">
               <label>자동 새로고침 간격 (초)</label>
               <input className="inp" type="number" min={10} value={s.refreshSecs} onChange={(e) => setS({ ...s, refreshSecs: Math.max(10, Number(e.target.value) || 60) })} />
-            </div>
-            <div className="field">
+            </div>}
+            {api.inTauri && <div className="field">
               <label>창 닫기</label>
               <label className="check">
                 <input type="checkbox" checked={s.closeToTray} onChange={(e) => setS({ ...s, closeToTray: e.target.checked })} />
                 닫으면 트레이로 숨기고 계속 수집
               </label>
-            </div>
+            </div>}
           </div>
+          {!api.inTauri && <p className="hint" style={{ marginBottom: 0 }}>{!cloudState.hasData ? "기록을 먼저 연결하거나 JSON·샘플을 가져오면 표시·예산 설정을 저장할 수 있어요." : cloudState.mode === "cloud" ? "표시·예산 설정은 같은 계정의 PC와 동기화돼요. 저장하려면 인터넷 연결이 필요해요." : "가져온 JSON·샘플의 표시·예산 설정은 현재 기기에 저장돼요."}</p>}
+          {snapshotTimeZone && snapshotTimeZone !== Intl.DateTimeFormat().resolvedOptions().timeZone && <p className="hint" style={{ marginBottom: 0 }}>일별 집계 기준: {snapshotTimeZone} · PC 시간대</p>}
         </Card>
-        <SourcesCard sources={sources} />
+        {api.inTauri ? <SourcesCard sources={sources} /> : <BrowserSupportCard />}
       </div>
-      <div className="grid g2">
+      {api.inTauri && <><div className="grid g2">
         <NotifyCard s={s} setS={setS} saveButton={saveButton} />
         <LiveCard s={s} setS={setS} saveButton={saveButton} />
       </div>
@@ -70,13 +94,23 @@ export function Settings({ onSaved, sources, updater }: { onSaved: (s: UiSetting
         <StartupCard />
         <ExportCard />
       </div>
-      <PricingCard unpriced={data.unpriced.map((u) => ({ model: u.model, tokens: u.tokens }))} />
+      </>}
+      {(api.inTauri || cloudState.hasData) && <PricingCard key={api.inTauri ? "desktop-pricing" : `${cloudState.mode}:${cloudState.selectedDeviceId}:${cloudState.capturedAt}`}
+        unpriced={data.unpriced.map((u) => ({ model: u.model, tokens: u.tokens }))} />}
     </div>
   );
 }
 
 function SourcesCard({ sources }: { sources: Sources | null }) {
   const [confirm, setConfirm] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const rebuild = async () => {
+    setBusy(true); setError("");
+    try { await api.rebuild(); setConfirm(false); }
+    catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+    finally { setBusy(false); }
+  };
   if (!sources) return <Card title="데이터 소스">불러오는 중…</Card>;
   const hooked = sources.claudeLimitsMtime !== null;
   return (
@@ -106,13 +140,14 @@ function SourcesCard({ sources }: { sources: Sources | null }) {
           {confirm ? (
             <>
               <span>저장된 기록을 지우고 로그에서 다시 읽을까요? 이미 삭제된 로그 파일의 기록은 사라져요.</span>
-              <button className="btn danger" onClick={() => api.rebuild().then(() => setConfirm(false))}>다시 읽기</button>
+              <button className="btn danger" disabled={busy} onClick={() => void rebuild()}>{busy ? "다시 읽는 중…" : "다시 읽기"}</button>
               <button className="btn" onClick={() => setConfirm(false)}>취소</button>
             </>
           ) : (
             <button className="btn" onClick={() => setConfirm(true)}>데이터베이스 다시 만들기</button>
           )}
         </div>
+        {error && <div className="notice" role="alert">{error}</div>}
       </div>
     </Card>
   );
@@ -240,9 +275,19 @@ function PricingCard({ unpriced }: { unpriced: { model: string; tokens: number }
     setSaved(JSON.stringify(x.pricing));
   };
   useEffect(() => {
-    api.pricing().then(apply);
+    api.pricing().then(apply).catch((err) => setMsg(err instanceof Error ? err.message : String(err)));
   }, []);
-  if (!p) return <Card title="모델 단가">불러오는 중…</Card>;
+  if (!p) return <Card title="모델 단가">{msg ? <div className="notice" role="alert">{msg}</div> : "불러오는 중…"}</Card>;
+  if (!api.inTauri) return <Card title="캡처에 사용된 모델 단가" sub="USD / 100만 토큰 · 읽기 전용">
+    <p className="hint">PC에서 캡처한 단가표예요. 단가 변경과 비용 다시 계산은 PC 앱에서 할 수 있어요.</p>
+    <div className="tbl-wrap" tabIndex={0} aria-label="모델 단가표, 가로로 스크롤할 수 있어요">
+      <table><thead><tr><th>모델</th>{PRICE_FIELDS.map(([, label]) => <th key={label}>{label}</th>)}</tr></thead>
+        <tbody>{p.entries.map((entry, index) => <tr key={`${entry.model}-${index}`}><td className="name-cell">{entry.model}</td>
+          {PRICE_FIELDS.map(([field]) => <td key={field}>${Number(entry[field]).toLocaleString("en-US", { maximumFractionDigits: 4 })}</td>)}
+        </tr>)}</tbody>
+      </table>
+    </div>
+  </Card>;
   const dirty = JSON.stringify(p) !== saved;
   const upd = (i: number, k: keyof PriceEntry, v: string) => {
     const entries = [...p.entries];
@@ -254,6 +299,8 @@ function PricingCard({ unpriced }: { unpriced: { model: string; tokens: number }
     try {
       apply(await api.setPricing(next));
       await api.rescan();
+    } catch (err) {
+      setMsg("저장 실패: " + (err instanceof Error ? err.message : String(err)));
     } finally {
       setBusy(false);
     }

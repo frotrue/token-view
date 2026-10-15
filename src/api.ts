@@ -1,232 +1,53 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { cloud, currentSharedSettings, getSnapshot, isDesktop, onCloudData, saveSharedSettings } from "./cloud";
+import { DEFAULT_SETTINGS, type Dashboard, type Live, type Pricing, type PricingInfo, type ScanStatus, type Sources, type StatuslineStatus, type TokenSums, type UiSettings } from "./cloud/models";
+import { emptyPricing } from "./cloud/demo";
+export * from "./cloud/models";
 
-export type Source = "claude" | "codex";
-
-export interface TokenSums {
-  input: number;
-  cacheWrite: number;
-  cacheRead: number;
-  output: number;
-  reasoning: number;
-  cost: number;
-  requests: number;
+function snapshot() {
+  const value = getSnapshot();
+  if (!value) throw new Error("클라우드에 연결하거나 JSON 데이터를 불러와 주세요.");
+  return value;
 }
-
-export interface TotalRow extends TokenSums {
-  source: Source;
-  firstTs: number;
-  lastTs: number;
+function mobileStatus(): ScanStatus {
+  return { running: false, files_total: 0, files_done: 0, bytes_total: 0, bytes_done: 0, current: "", last_scan_ms: getSnapshot()?.capturedAt ?? 0, last_duration_ms: 0, new_events: 0, last_error: "" };
 }
-export interface DailyRow extends TokenSums {
-  date: string;
-  source: Source;
-}
-export interface DailyModelRow extends DailyRow {
-  model: string;
-}
-export interface DailyProjectRow extends DailyRow {
-  project: string;
-}
-export interface HourlyRow extends TokenSums {
-  hour: number;
-  source: Source;
-}
-export interface FineRow extends TokenSums {
-  t: number;
-  source: Source;
-}
-export interface LimitSnap {
-  source: Source;
-  limitId: string;
-  win: string;
-  ts: number;
-  usedPct: number;
-  windowMinutes: number;
-  resetsAt: number;
-  plan: string;
-}
-export interface Unpriced {
-  source: Source;
-  model: string;
-  requests: number;
-  tokens: number;
-}
-
-export interface SessionRow extends TokenSums {
-  source: Source;
-  session: string;
-  project: string;
-  firstTs: number;
-  lastTs: number;
-  models: string;
-}
-
-export interface LiveResult {
-  ok: boolean;
-  ts: number;
-  error?: string;
-  info?: Record<string, unknown>;
-}
-export interface StatusPage {
-  id: string;
-  name: string;
-  url: string;
-  indicator: "none" | "minor" | "major" | "critical" | "maintenance" | "unknown";
-  description: string;
-}
-export interface Live {
-  claude?: LiveResult | null;
-  codex?: LiveResult | null;
-  status?: { ts: number; pages: StatusPage[] } | null;
-  codexInfo?: {
-    ts: number;
-    planType?: string;
-    credits?: { hasCredits: boolean; unlimited: boolean; balance?: string };
-    resetCredits?: number;
-    reached?: string | null;
-  };
-}
-
-export interface Dashboard {
-  now: number;
-  totals: TotalRow[];
-  daily: DailyRow[];
-  dailyModel: DailyModelRow[];
-  dailyProject: DailyProjectRow[];
-  hourly: HourlyRow[];
-  fine: FineRow[];
-  limits: LimitSnap[];
-  unpriced: Unpriced[];
-  sessions: SessionRow[];
-}
-
-export interface ScanStatus {
-  running: boolean;
-  files_total: number;
-  files_done: number;
-  bytes_total: number;
-  bytes_done: number;
-  current: string;
-  last_scan_ms: number;
-  last_duration_ms: number;
-  new_events: number;
-  last_error: string;
-}
-
-export interface PriceEntry {
-  model: string;
-  input: number;
-  output: number;
-  cache_write_5m: number;
-  cache_write_1h: number;
-  cache_read: number;
-  long_ctx_threshold: number;
-  long_input_mult: number;
-  long_output_mult: number;
-}
-export interface Pricing {
-  version: string;
-  entries: PriceEntry[];
-  fast_mult: number;
-  web_search_usd: number;
-}
-
-export interface PricingInfo {
-  pricing: Pricing;
-  custom: boolean;
-  defaultVersion: string;
-  builtinVersion: string;
-  remoteUrl: string;
-}
-
-export interface StatuslineStatus {
-  settingsPath: string;
-  command: string;
-  connected: boolean;
-  original: { command?: string } | null;
-}
-
-export interface UiSettings {
-  refreshSecs: number;
-  closeToTray: boolean;
-  currency: "USD" | "KRW";
-  krwRate: number;
-  monthlyBudget: number | null;
-  budgetClaude: number | null;
-  budgetCodex: number | null;
-  /** Poll Anthropic's (unofficial) OAuth usage endpoint with Claude Code's login. */
-  claudeApi: boolean;
-  /** Ask the local Codex app-server for current limits. */
-  codexLive: boolean;
-  serviceStatus: boolean;
-  liveSecs: number;
-  notify: {
-    enabled: boolean;
-    thresholds: number[];
-    exhaust: boolean;
-    budget: boolean;
-    reset: boolean;
-  };
-}
-
-export const DEFAULT_SETTINGS: UiSettings = {
-  refreshSecs: 60,
-  closeToTray: true,
-  currency: "USD",
-  krwRate: 1400,
-  monthlyBudget: null,
-  budgetClaude: null,
-  budgetCodex: null,
-  claudeApi: false,
-  codexLive: true,
-  serviceStatus: true,
-  liveSecs: 300,
-  notify: { enabled: true, thresholds: [80, 95], exhaust: true, budget: true, reset: false },
-};
-
-export interface Sources {
-  claude: { path: string; exists: boolean }[];
-  codex: { path: string; exists: boolean }[];
-  claudeLimitsFile: string;
-  claudeLimitsMtime: number | null;
-}
-
-// Outside the Tauri shell (plain `vite` in a browser) serve a local snapshot so the UI
-// can be developed without the backend. The file is git-ignored.
-const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
-async function mock<T>(cmd: string): Promise<T> {
-  const all = await fetch("/dev-snapshot.json").then((r) => r.json());
-  return all[cmd] as T;
-}
-const call = <T,>(cmd: string, args?: Record<string, unknown>) => (inTauri ? invoke<T>(cmd, args) : mock<T>(cmd));
+function desktopOnly<T>(): Promise<T> { return Promise.reject(new Error("이 기능은 PC 앱에서 사용할 수 있어요.")); }
 
 export const api = {
-  dashboard: () => call<Dashboard>("get_dashboard"),
-  status: () => call<ScanStatus>("get_status"),
-  rescan: () => invoke<void>("rescan"),
-  rebuild: () => invoke<void>("rebuild"),
-  pricing: () => call<PricingInfo>("get_pricing"),
-  setPricing: (pricing: Pricing | null) => invoke<PricingInfo>("set_pricing", { pricing }),
-  refreshPricing: () => invoke<PricingInfo>("refresh_pricing"),
-  statusline: () => (inTauri ? invoke<StatuslineStatus>("statusline_status") : Promise.resolve(null)),
-  statuslineConnect: (connect: boolean) => invoke<StatuslineStatus>("statusline_connect", { connect }),
-  live: () => (inTauri ? invoke<Live>("get_live") : Promise.resolve({} as Live)),
-  refreshLive: () => invoke<Live>("refresh_live_now"),
-  updateTray: (tooltip: string, bars: { pct: number; color: string }[]) =>
-    inTauri ? invoke<void>("update_tray", { tooltip, bars }) : Promise.resolve(),
-  exportData: (kind: "events" | "daily" | "json", path: string) => invoke<number>("export_data", { kind, path }),
-  inTauri,
-  settings: async () => {
-    const s = await call<Partial<UiSettings>>("get_settings");
-    return { ...DEFAULT_SETTINGS, ...s, notify: { ...DEFAULT_SETTINGS.notify, ...(s?.notify ?? {}) } };
+  dashboard: (): Promise<Dashboard> => isDesktop ? invoke("get_dashboard") : Promise.resolve().then(() => snapshot().dashboard),
+  status: (): Promise<ScanStatus> => isDesktop ? invoke("get_status") : Promise.resolve(mobileStatus()),
+  rescan: () => isDesktop ? invoke<void>("rescan") : cloud.refresh(),
+  rebuild: () => isDesktop ? invoke<void>("rebuild") : desktopOnly<void>(),
+  pricing: (): Promise<PricingInfo> => isDesktop ? invoke("get_pricing") : Promise.resolve(getSnapshot()?.pricing ?? emptyPricing),
+  setPricing: (pricing: Pricing | null): Promise<PricingInfo> => isDesktop ? invoke("set_pricing", { pricing }) : desktopOnly(),
+  refreshPricing: (): Promise<PricingInfo> => isDesktop ? invoke("refresh_pricing") : desktopOnly(),
+  statusline: (): Promise<StatuslineStatus | null> => isDesktop ? invoke("statusline_status") : Promise.resolve(null),
+  statuslineConnect: (connect: boolean): Promise<StatuslineStatus> => isDesktop ? invoke("statusline_connect", { connect }) : desktopOnly(),
+  live: (): Promise<Live> => isDesktop ? invoke("get_live") : Promise.resolve(getSnapshot()?.live ?? {}),
+  refreshLive: async (): Promise<Live> => { if (isDesktop) return invoke("refresh_live_now"); await cloud.requestRefresh(); return getSnapshot()?.live ?? {}; },
+  updateTray: (tooltip: string, bars: { pct: number; color: string }[]) => isDesktop ? invoke<void>("update_tray", { tooltip, bars }) : Promise.resolve(),
+  exportData: async (kind: "events" | "daily" | "json", path: string): Promise<number> => {
+    if (isDesktop) return invoke("export_data", { kind, path });
+    if (kind !== "json") return desktopOnly();
+    await cloud.downloadSnapshot(); return 1;
   },
-  setSettings: (settings: UiSettings) => invoke<void>("set_settings", { settings }),
-  sources: () => call<Sources>("get_sources"),
-  onStatus: (cb: (s: ScanStatus) => void): Promise<UnlistenFn> =>
-    inTauri ? listen<ScanStatus>("scan-status", (e) => cb(e.payload)) : Promise.resolve(() => {}),
-  onData: (cb: (s: ScanStatus) => void): Promise<UnlistenFn> =>
-    inTauri ? listen<ScanStatus>("data-updated", (e) => cb(e.payload)) : Promise.resolve(() => {}),
+  inTauri: isDesktop,
+  settings: async (): Promise<UiSettings> => {
+    const s = isDesktop ? await invoke<Partial<UiSettings>>("get_settings") : currentSharedSettings();
+    return { ...DEFAULT_SETTINGS, ...s, notify: { ...DEFAULT_SETTINGS.notify, ...("notify" in s ? s.notify : {}) } };
+  },
+  setSettings: (settings: UiSettings) => isDesktop ? invoke<void>("set_settings", { settings }) : saveSharedSettings(settings),
+  sources: (): Promise<Sources> => isDesktop ? invoke("get_sources") : Promise.resolve({ claude: [], codex: [], claudeLimitsFile: "", claudeLimitsMtime: getSnapshot()?.claudeHooked ? getSnapshot()!.capturedAt : null }),
+  onStatus: (cb: (s: ScanStatus) => void): Promise<UnlistenFn> => isDesktop ? listen<ScanStatus>("scan-status", (e) => cb(e.payload)) : Promise.resolve(onCloudData(() => cb(mobileStatus()))),
+  onData: async (cb: (s: ScanStatus) => void): Promise<UnlistenFn> => {
+    if (!isDesktop) return onCloudData(() => cb(mobileStatus()));
+    const handlers = await Promise.all([
+      listen<ScanStatus>("data-updated", (e) => cb(e.payload)),
+      listen("cloud-settings-updated", () => { void invoke<ScanStatus>("get_status").then(cb).catch(() => {}); }),
+    ]);
+    return () => handlers.forEach((stop) => stop());
+  },
 };
-
 export const totalTokens = (s: TokenSums) => s.input + s.cacheWrite + s.cacheRead + s.output;
