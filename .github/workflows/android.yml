@@ -1,0 +1,96 @@
+name: Android
+
+# Builds the signed phone app (mobile/). Pull requests get the APK as an artifact;
+# a version tag also attaches it to that GitHub Release.
+on:
+  pull_request:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      NDK_VERSION: 27.2.12479018
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Android NDK
+        run: |
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" > /dev/null
+          echo "NDK_HOME=$ANDROID_HOME/ndk/$NDK_VERSION" >> "$GITHUB_ENV"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: mobile/src-tauri
+
+      - run: npm ci
+
+      - name: Generate the Android project
+        working-directory: mobile
+        run: |
+          npx tauri android init --ci
+          npx tauri icon src-tauri/icons/icon.png
+
+      - name: Release signing
+        working-directory: mobile
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          echo "$KEYSTORE" | base64 -d > "$RUNNER_TEMP/token-view.jks"
+          python3 ci/configure_signing.py "$RUNNER_TEMP/token-view.jks" "$PASSWORD"
+
+      - name: Build APK
+        working-directory: mobile
+        run: npx tauri android build --apk --target aarch64 --ci
+
+      - name: Collect APK
+        id: apk
+        run: |
+          version=$(node -p "require('./package.json').version")
+          src=$(find mobile/src-tauri/gen/android/app/build/outputs/apk -name '*release*.apk' | head -n1)
+          test -n "$src"
+          mkdir -p out
+          cp "$src" "out/Token.View_${version}_android-arm64.apk"
+          echo "path=out/Token.View_${version}_android-arm64.apk" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: token-view-android
+          path: ${{ steps.apk.outputs.path }}
+          retention-days: 14
+
+      - name: Attach to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The desktop workflow creates the release; wait for it (up to ~25 min).
+          for i in $(seq 1 50); do
+            gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1 && break
+            sleep 30
+          done
+          gh release upload "$GITHUB_REF_NAME" "${{ steps.apk.outputs.path }}" --clobber

@@ -10,7 +10,9 @@ import * as google from './cloud/google';
 import { AuthExpired, type RemoteFile } from './cloud/remote';
 
 export type { CloudViewState, CloudSnapshot } from './cloud/types';
-export const isDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+/** The Android app is a Tauri app too, but it is a reader like the web build. */
+export const isNativeMobile = import.meta.env.VITE_TARGET === 'mobile';
+export const isDesktop = !isNativeMobile && typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 const TOKEN_KEY = 'tv-google-token-v1';
 const ACCOUNT_KEY = 'tv-google-account-v1';
 const LOCAL_MODE = 'tv-local-mode-v1';
@@ -24,7 +26,7 @@ interface Account extends google.GoogleAccount { provider?: 'google' | 'github';
 
 let state: CloudViewState = {
   mode: isDesktop ? 'desktop' : 'cloud', initialized: false,
-  available: !isDesktop && google.clientId() !== null, customClient: false, clientId: '',
+  available: isNativeMobile || (!isDesktop && google.clientId() !== null), customClient: false, clientId: '',
   authenticated: false, needsReconnect: false, signingIn: false, provider: null, githubRepo: '',
   email: null, deviceName: '', enabled: false, persistentSession: false,
   devices: [], selectedDeviceId: null, busy: false, error: null, warning: null,
@@ -32,7 +34,7 @@ let state: CloudViewState = {
   lastFetchedAt: null, capturedAt: null, lastUploadAt: null, lastCheckAt: null, lastUploadBytes: null,
   refreshRequestedAt: null, hasData: false,
 };
-if (!isDesktop) { const custom = google.customClientId(); state = { ...state, customClient: !!custom, clientId: custom ?? '' }; }
+if (!isDesktop && !isNativeMobile) { const custom = google.customClientId(); state = { ...state, customClient: !!custom, clientId: custom ?? '' }; }
 /** What the UI shows (capture time advanced by the PC's "unchanged" checks). */
 let current: CloudSnapshot | null = null;
 /** The snapshot exactly as downloaded, to avoid re-downloading unchanged content. */
@@ -58,6 +60,18 @@ const selectedKey = () => `tv-selected:${account?.userId ?? ''}`;
 const cacheKey = (deviceId: string) => `google|${account?.userId ?? ''}|${deviceId}`;
 const message = (error: unknown) => error instanceof Error ? error.message : typeof error === 'string' ? error : '연결을 완료하지 못했어요. 잠시 후 다시 시도해 주세요.';
 const hasToken = () => !!token && token.expiresAt > Date.now() + 30_000;
+
+/** On Android a new Google token comes silently from Play services; the web's expires. */
+async function renewToken() {
+  if (hasToken()) return true;
+  if (!isNativeMobile || !account || account.provider === 'github') return false;
+  try {
+    token = await google.nativeAuthorize(false);
+    storageSet(TOKEN_KEY, JSON.stringify(token));
+    patch({ authenticated: true, needsReconnect: false });
+    return true;
+  } catch { return false; }
+}
 
 function readJson<T>(key: string, check: (v: unknown) => v is T): T | null {
   try { const v = JSON.parse(storageGet(key) ?? 'null'); return check(v) ? v : null; } catch { return null; }
@@ -152,10 +166,10 @@ function newest(files: RemoteFile[], name: string) {
   return files.filter((f) => f.name === name).sort((a, b) => b.modifiedTime.localeCompare(a.modifiedTime))[0] ?? null;
 }
 
-async function fetchSnapshot() {
+async function fetchSnapshot(retried = false): Promise<void> {
   if (!account || state.mode !== 'cloud') return;
   if (!navigator.onLine) { patch({ offline: true }); return; }
-  if (!hasToken()) { expire(); return; }
+  if (!(await renewToken())) { expire(); return; }
   const remote = backend();
   const ownRevision = revision;
   lastAttempt = Date.now();
@@ -163,7 +177,11 @@ async function fetchSnapshot() {
   try { files = await remote.list(); }
   catch (error) {
     if (ownRevision !== revision) return;
-    if (error instanceof AuthExpired) { expire(); return; }
+    if (error instanceof AuthExpired) {
+      token = null;
+      if (!retried && await renewToken()) return fetchSnapshot(true);
+      expire(); return;
+    }
     failureCount++; throw new Error(`${sourceLabel()}에서 기록을 가져오지 못했어요. ${error instanceof Error && isGithub() ? error.message : '연결 상태를 확인해 주세요.'}`);
   }
   if (ownRevision !== revision) return;
@@ -230,7 +248,7 @@ async function restoreAccount() {
     if (ownRevision !== revision) return;
     if (cached) installSnapshot(cached, 'cloud');
   }
-  if (hasToken()) await refresh();
+  if (await renewToken()) await refresh();
 }
 
 async function initialize() {
@@ -300,6 +318,22 @@ async function initialize() {
 }
 
 async function signIn() {
+  if (isNativeMobile) {
+    await action(async () => {
+      patch({ signingIn: true });
+      try {
+        const fresh = await google.nativeAuthorize(true);
+        const who = await google.account(fresh);
+        // A different Google account must never see the previous one's cache.
+        if (account && account.userId !== who.userId) { forgetAccount(); await clearCache().catch(() => {}); }
+        account = { ...who, provider: 'google' }; token = fresh;
+        storageSet(ACCOUNT_KEY, JSON.stringify(account)); storageSet(TOKEN_KEY, JSON.stringify(token)); storageSet(LOCAL_MODE, null);
+        patch({ mode: 'cloud', error: null });
+        await restoreAccount();
+      } finally { patch({ signingIn: false }); }
+    });
+    return;
+  }
   if (isDesktop) {
     await action(async () => { nativeStatus(await invoke<DesktopCloudStatus>('cloud_sign_in')); });
     return;
@@ -365,7 +399,7 @@ async function requestRefresh() {
     if (isDesktop) { nativeStatus(await invoke<DesktopCloudStatus>('cloud_sync_now')); return; }
     const deviceId = state.selectedDeviceId;
     if (!account || state.mode !== 'cloud' || !deviceId) throw new Error('먼저 연결한 뒤 PC를 선택해 주세요.');
-    if (!hasToken()) { expire(); throw new AuthExpired(); }
+    if (!(await renewToken())) { expire(); throw new AuthExpired(); }
     const ownRevision = revision;
     const nonce = google.newNonce();
     const name = requestName(deviceId);
@@ -403,7 +437,7 @@ export async function saveSharedSettings(settings: UiSettings) {
   if (!current) throw new Error('데이터를 먼저 불러와 주세요.');
   if (state.mode === 'cloud') {
     if (!account || !navigator.onLine) throw new Error('공유 설정 저장에는 인터넷 연결과 저장소 연결이 필요해요.');
-    if (!hasToken()) { expire(); throw new AuthExpired(); }
+    if (!(await renewToken())) { expire(); throw new AuthExpired(); }
     const ownRevision = revision;
     const props: Record<string, string> = { tv: 'settings', rev: String(Date.now()) };
     for (const key of SHARED_KEYS) props[key] = value[key] === null ? '' : String(value[key]);

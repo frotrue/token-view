@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "dev:mobile": "vite --mode mobile",
+    "build:mobile": "tsc -b && vite build --mode mobile",
     "tauri": "tauri",
     "test": "vitest run",
     "test:e2e": "playwright test",

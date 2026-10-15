@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { api } from "./api";
-import { cloud, useCloud } from "./cloud";
+import { cloud, isNativeMobile, useCloud } from "./cloud";
 import { fmtAgo, fmtDateTime } from "./format";
 import { Card } from "./ui";
 
@@ -170,7 +170,7 @@ export function CloudPanel({ onboarding = false }: { onboarding?: boolean }) {
           </details>
         )}
 
-        <details className="cloud-advanced" open={!state.available && state.initialized && desktop ? true : undefined}>
+        {!isNativeMobile && <details className="cloud-advanced" open={!state.available && state.initialized && desktop ? true : undefined}>
           <summary>{desktop ? "PC 이름 · 연결 설정" : "구글 클라이언트 ID"}<span>고급</span></summary>
           {desktop ? (
             <form className="cloud-form" onSubmit={saveDesktop}>
@@ -206,7 +206,7 @@ export function CloudPanel({ onboarding = false }: { onboarding?: boolean }) {
               <button type="submit" className="btn" disabled={disabled}>{pending === "client" ? "저장 중…" : "클라이언트 ID 저장"}</button>
             </form>
           )}
-        </details>
+        </details>}
 
         {!desktop && <div className="cloud-files">
           <div className="cloud-divider"><span>파일로 확인하기</span></div>
@@ -245,6 +245,6 @@ export function BrowserSupportCard() {
     <p>사용량·한도·예측 확인, 표시 통화·예산 설정, JSON 가져오기와 다운로드를 사용할 수 있어요.</p>
     <p className="muted">한도는 PC의 마지막 기록을 표시해요. 최신 정보가 필요하면 "PC에 최신 한도 요청"을 눌러 주세요.</p>
     <p className="muted">로그 수집, 실시간 한도 조회 설정, Windows 알림·시작 프로그램, 단가 수정은 PC 앱에서 설정하세요.</p>
-    <div className="install-hint"><strong>홈 화면에 추가하기</strong><span>iPhone은 Safari의 공유 메뉴, Android는 브라우저 메뉴에서 ‘홈 화면에 추가’ 또는 ‘앱 설치’를 선택하세요.</span></div>
+    {!isNativeMobile && <div className="install-hint"><strong>홈 화면에 추가하기</strong><span>iPhone은 Safari의 공유 메뉴, Android는 브라우저 메뉴에서 ‘홈 화면에 추가’ 또는 ‘앱 설치’를 선택하세요.</span></div>}
   </Card>;
 }

@@ -117,6 +117,25 @@ export async function putProps(token: GoogleToken, id: string | null, name: stri
   return { id: String(value.id), name: String(value.name ?? name), modifiedTime: String(value.modifiedTime ?? ''), appProperties: value.appProperties ?? props };
 }
 
+/**
+ * Android app: a token from Google Play services (see mobile/plugin-google-auth).
+ * Once consent is given, `interactive: false` renews it without any UI.
+ */
+export async function nativeAuthorize(interactive: boolean): Promise<GoogleToken> {
+  const { invoke } = await import('@tauri-apps/api/core');
+  let result: { accessToken?: string; scopes?: string };
+  try { result = await invoke('plugin:google-auth|authorize', { interactive }); }
+  catch (error) {
+    const text = String(error);
+    if (/consent_required|cancelled|superseded/.test(text)) throw new AuthExpired('구글 연결이 필요해요. 구글 계정으로 연결을 눌러 주세요.');
+    throw new Error(`구글 연결에 실패했어요. (${text.slice(0, 120)})`);
+  }
+  if (!result.accessToken) throw new Error('구글 로그인 응답이 올바르지 않아요.');
+  if (result.scopes && !result.scopes.split(' ').includes(DRIVE_SCOPE)) throw new Error('구글 드라이브 권한을 허용해야 기록을 볼 수 있어요.');
+  // Play services tokens last about an hour; renew a little early.
+  return { accessToken: result.accessToken, expiresAt: Date.now() + 50 * 60_000 };
+}
+
 export async function revoke(token: GoogleToken) {
   try {
     await fetch('https://oauth2.googleapis.com/revoke', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `token=${encodeURIComponent(token.accessToken)}`, signal: AbortSignal.timeout(10_000) });

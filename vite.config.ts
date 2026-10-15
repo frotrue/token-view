@@ -46,9 +46,10 @@ self.addEventListener('fetch', event => {
   },
 });
 
-export default defineConfig({
-  plugins: [react(), devSnapshot(), offlineShell()],
+// `--mode mobile` builds the Android app's UI (no service worker; the app ships it).
+export default defineConfig(({ mode }) => ({
+  plugins: [react(), devSnapshot(), ...(mode === "mobile" ? [] : [offlineShell()])],
   clearScreen: false,
-  server: { port: 1420, strictPort: true },
-  build: { target: "es2022", chunkSizeWarningLimit: 1500 },
-});
+  server: { port: mode === "mobile" ? 1421 : 1420, strictPort: true, host: mode === "mobile" ? true : undefined },
+  build: { target: "es2022", chunkSizeWarningLimit: 1500, outDir: mode === "mobile" ? "dist-mobile" : "dist" },
+}));
