@@ -23,7 +23,7 @@ if "signingConfigs" not in s:
         """android {
     signingConfigs {
         create("release") {
-            val props = java.util.Properties().apply { load(FileInputStream(rootProject.file("keystore.properties"))) }
+            val props = Properties().apply { load(FileInputStream(rootProject.file("keystore.properties"))) }
             keyAlias = props["keyAlias"] as String
             keyPassword = props["password"] as String
             storeFile = file(props["storeFile"] as String)
