@@ -65,7 +65,9 @@ jobs:
 
       - name: Build APK
         working-directory: mobile
-        run: npm run tauri -- android build --apk --target aarch64 --ci
+        run: |
+          code=$(node ci/version_code.mjs)
+          npm run tauri -- android build --apk --target aarch64 --ci --config "{\"bundle\":{\"android\":{\"versionCode\":$code}}}"
 
       - name: Collect APK
         id: apk

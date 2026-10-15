@@ -3,9 +3,9 @@ import { api, type PriceEntry, type Pricing, type PricingInfo, type Sources, typ
 import { fmtAgo, fmtTokens } from "./format";
 import { ExportCard, LiveCard, NotifyCard, StartupCard } from "./SettingsExtra";
 import { BrowserSupportCard, CloudPanel } from "./CloudPanel";
-import { useCloud } from "./cloud";
+import { isNativeMobile, useCloud } from "./cloud";
 import { Card, Seg, useApp } from "./ui";
-import type { useUpdater } from "./update";
+import { updatesEnabled, type useUpdater } from "./update";
 
 type Updater = ReturnType<typeof useUpdater>;
 
@@ -80,7 +80,7 @@ export function Settings({ onSaved, sources, updater }: { onSaved: (s: UiSetting
           {!api.inTauri && <p className="hint" style={{ marginBottom: 0 }}>{!cloudState.hasData ? "기록을 먼저 연결하거나 JSON·샘플을 가져오면 표시·예산 설정을 저장할 수 있어요." : cloudState.mode === "cloud" ? "표시·예산 설정은 같은 계정의 PC와 동기화돼요. 저장하려면 인터넷 연결이 필요해요." : "가져온 JSON·샘플의 표시·예산 설정은 현재 기기에 저장돼요."}</p>}
           {snapshotTimeZone && snapshotTimeZone !== Intl.DateTimeFormat().resolvedOptions().timeZone && <p className="hint" style={{ marginBottom: 0 }}>일별 집계 기준: {snapshotTimeZone} · PC 시간대</p>}
         </Card>
-        {api.inTauri ? <SourcesCard sources={sources} /> : <BrowserSupportCard />}
+        {api.inTauri ? <SourcesCard sources={sources} /> : isNativeMobile ? <AppInfoCard updater={updater} /> : <BrowserSupportCard />}
       </div>
       {api.inTauri && <><div className="grid g2">
         <NotifyCard s={s} setS={setS} saveButton={saveButton} />
@@ -225,6 +225,7 @@ function AppInfoCard({ updater }: { updater: Updater }) {
   else if (st.kind === "none") line = "최신 버전이에요";
   else if (st.kind === "available") line = <>새 버전 <b>v{st.update.version}</b>이 있어요</>;
   else if (st.kind === "downloading") line = "내려받는 중…";
+  else if (st.kind === "installing") line = "설치 화면에서 ‘업데이트’를 눌러 주세요";
   else if (st.kind === "error") line = <span style={{ color: "var(--critical)" }}>확인 실패: {st.message}</span>;
   return (
     <Card
@@ -232,10 +233,10 @@ function AppInfoCard({ updater }: { updater: Updater }) {
       right={
         st.kind === "available" ? (
           <button className="btn primary" onClick={updater.install}>
-            업데이트 후 다시 시작
+            {isNativeMobile ? "내려받아 설치" : "업데이트 후 다시 시작"}
           </button>
         ) : (
-          <button className="btn" disabled={st.kind === "checking" || st.kind === "downloading" || !api.inTauri} onClick={updater.check}>
+          <button className="btn" disabled={st.kind === "checking" || st.kind === "downloading" || st.kind === "installing" || !updatesEnabled} onClick={updater.check}>
             업데이트 확인
           </button>
         )

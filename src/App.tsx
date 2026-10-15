@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, DEFAULT_SETTINGS, FAILURE_TEXT, type Dashboard, type Live, type ScanStatus, type Sources, type UiSettings } from "./api";
-import { cloud, getSnapshot, useCloud } from "./cloud";
+import { cloud, getSnapshot, isNativeMobile, useCloud } from "./cloud";
 import { BrowserSupportCard, CloudPanel } from "./CloudPanel";
 import { buildLimitViews, dailySeries, project } from "./forecast";
 import { fmtAgo, fmtDateTime, makeMoney } from "./format";
@@ -165,19 +165,21 @@ export default function App() {
           </button>
         </div>
       </header>
-      {(up.kind === "available" || up.kind === "downloading") && (
+      {(up.kind === "available" || up.kind === "downloading" || up.kind === "installing") && (
         <div className="update-bar">
           <span>
             새 버전 <b>v{up.update.version}</b>이 있어요
             {updater.version && <span className="muted"> · 지금 v{updater.version}</span>}
           </span>
-          {up.kind === "downloading" ? (
+          {up.kind === "installing" ? (
+            <span className="muted">설치 화면에서 ‘업데이트’를 누르세요. 처음이면 이 앱의 설치 허용이 필요해요</span>
+          ) : up.kind === "downloading" ? (
             <span className="muted">
-              내려받는 중 {up.total ? Math.round((up.done / up.total) * 100) + "%" : ""} · 설치가 끝나면 다시 시작돼요
+              내려받는 중 {up.total ? Math.round((up.done / up.total) * 100) + "%" : ""}{isNativeMobile ? "" : " · 설치가 끝나면 다시 시작돼요"}
             </span>
           ) : (
             <button className="btn primary" onClick={updater.install}>
-              업데이트 후 다시 시작
+              {isNativeMobile ? "내려받아 설치" : "업데이트 후 다시 시작"}
             </button>
           )}
         </div>
