@@ -1,6 +1,6 @@
 [package]
 name = "token-view-mobile"
-version = "0.3.0"
+version = "0.3.1"
 description = "Token View for Android: reads the PC's synced usage snapshot"
 edition = "2021"
 

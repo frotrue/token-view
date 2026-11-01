@@ -1,6 +1,6 @@
 [package]
 name = "token-view"
-version = "0.3.0"
+version = "0.3.1"
 description = "Claude Code + Codex token usage monitor"
 edition = "2021"
 
