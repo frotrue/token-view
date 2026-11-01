@@ -28,6 +28,9 @@ export const api = {
   live: (): Promise<Live> => isDesktop ? invoke("get_live") : Promise.resolve(getSnapshot()?.live ?? {}),
   refreshLive: async (): Promise<Live> => { if (isDesktop) return invoke("refresh_live_now"); await cloud.requestRefresh(); return getSnapshot()?.live ?? {}; },
   updateTray: (tooltip: string, bars: { pct: number; color: string }[]) => isDesktop ? invoke<void>("update_tray", { tooltip, bars }) : Promise.resolve(),
+  hud: (): Promise<boolean> => isDesktop ? invoke("get_hud") : Promise.resolve(false),
+  setHud: (visible: boolean) => isDesktop ? invoke<void>("set_hud", { visible }) : desktopOnly<void>(),
+  onHud: (cb: (visible: boolean) => void): Promise<UnlistenFn> => isDesktop ? listen<boolean>("hud-changed", (e) => cb(e.payload)) : Promise.resolve(() => {}),
   exportData: async (kind: "events" | "daily" | "json", path: string): Promise<number> => {
     if (isDesktop) return invoke("export_data", { kind, path });
     if (kind !== "json") return desktopOnly();

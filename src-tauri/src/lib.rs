@@ -1,6 +1,7 @@
 mod db;
 mod cloud;
 mod export;
+mod hud;
 mod live;
 mod pricing;
 mod remote;
@@ -16,11 +17,11 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Sender};
 use std::sync::Mutex;
 use std::time::Duration;
-use tauri::menu::{Menu, MenuItem};
+use tauri::menu::{CheckMenuItem, Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 
-struct AppState {
+pub(crate) struct AppState {
     db_path: PathBuf,
     status: Mutex<ScanStatus>,
     trigger: Mutex<Sender<()>>,
@@ -352,6 +353,33 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+#[tauri::command]
+fn get_hud(app: AppHandle) -> bool {
+    hud::enabled(&app)
+}
+
+/// Async: building a webview from a sync command deadlocks on Windows.
+#[tauri::command]
+async fn set_hud(app: AppHandle, visible: bool) -> Result<(), String> {
+    hud::set_visible(&app, visible).map_err(err)
+}
+
+#[tauri::command]
+fn open_main(app: AppHandle) {
+    show_main(&app);
+}
+
+/// Right-click menu on the HUD. Ids are prefixed so the tray's handler ignores them.
+#[tauri::command]
+async fn hud_menu(window: tauri::Window) -> Result<(), String> {
+    let app = window.app_handle();
+    let open = MenuItem::with_id(app, "hud-open", "Token View 열기", true, None::<&str>).map_err(err)?;
+    let refresh = MenuItem::with_id(app, "hud-refresh", "지금 새로고침", true, None::<&str>).map_err(err)?;
+    let hide = MenuItem::with_id(app, "hud-hide", "HUD 숨기기", true, None::<&str>).map_err(err)?;
+    let menu = Menu::with_items(app, &[&open, &refresh, &hide]).map_err(err)?;
+    window.popup_menu(&menu).map_err(err)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -393,8 +421,24 @@ pub fn run() {
 
             let open = MenuItem::with_id(app, "open", "열기", true, None::<&str>)?;
             let refresh = MenuItem::with_id(app, "refresh", "지금 새로고침", true, None::<&str>)?;
+            let hud_on = hud::enabled(app.handle());
+            let hud_item = CheckMenuItem::with_id(app, "hud", "HUD 표시", true, hud_on, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&open, &refresh, &quit])?;
+            let menu = Menu::with_items(app, &[&open, &refresh, &hud_item, &quit])?;
+            app.manage(hud::TrayItem(hud_item));
+            if hud_on {
+                let _ = hud::set_visible(app.handle(), true);
+            }
+            app.on_menu_event(|app, ev| match ev.id().as_ref() {
+                "hud-open" => show_main(app),
+                "hud-refresh" => {
+                    let _ = app.state::<AppState>().trigger.lock().unwrap().send(());
+                }
+                "hud-hide" => {
+                    let _ = hud::set_visible(app, false);
+                }
+                _ => {}
+            });
             TrayIconBuilder::with_id("main")
                 .icon(app.default_window_icon().unwrap().clone())
                 .tooltip("Token View")
@@ -404,6 +448,9 @@ pub fn run() {
                     "open" => show_main(app),
                     "refresh" => {
                         let _ = app.state::<AppState>().trigger.lock().unwrap().send(());
+                    }
+                    "hud" => {
+                        let _ = hud::set_visible(app, !hud::enabled(app));
                     }
                     "quit" => app.exit(0),
                     _ => {}
@@ -418,18 +465,27 @@ pub fn run() {
             start_scanner(app.handle().clone(), rx);
             Ok(())
         })
-        .on_window_event(|window, event| {
-            if let WindowEvent::CloseRequested { api, .. } = event {
+        .on_window_event(|window, event| match event {
+            WindowEvent::CloseRequested { api, .. } if window.label() == hud::LABEL => {
+                api.prevent_close();
+                let _ = hud::set_visible(window.app_handle(), false);
+            }
+            WindowEvent::CloseRequested { api, .. } => {
                 let state = window.state::<AppState>();
                 let to_tray = db::open(&state.db_path)
                     .ok()
                     .and_then(|c| ui_settings(&c).get("closeToTray").and_then(|v| v.as_bool()))
                     .unwrap_or(true);
+                api.prevent_close();
                 if to_tray {
-                    api.prevent_close();
                     let _ = window.hide();
+                } else {
+                    // The HUD would otherwise keep the app alive without a main window.
+                    window.app_handle().exit(0);
                 }
             }
+            WindowEvent::Moved(_) if window.label() == hud::LABEL => hud::remember_position(window.app_handle()),
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
             get_dashboard,
@@ -448,6 +504,10 @@ pub fn run() {
             refresh_live_now,
             update_tray,
             export_data,
+            get_hud,
+            set_hud,
+            open_main,
+            hud_menu,
             cloud_status,
             cloud_configure,
             cloud_sign_in,

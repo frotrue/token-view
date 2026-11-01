@@ -53,9 +53,15 @@ export function NotifyCard({ s, setS, saveButton }: Edit) {
 
 export function StartupCard() {
   const [on, setOn] = useState<boolean | null>(null);
+  const [hud, setHud] = useState<boolean | null>(null);
   const [err, setErr] = useState("");
   useEffect(() => {
-    if (api.inTauri) autostartEnabled().then(setOn).catch((e) => setErr(String(e)));
+    if (!api.inTauri) return;
+    autostartEnabled().then(setOn).catch((e) => setErr(String(e)));
+    api.hud().then(setHud).catch((e) => setErr(String(e)));
+    // The tray menu and the HUD's own menu toggle it too.
+    const un = api.onHud(setHud).catch(() => () => {});
+    return () => void un.then((f) => f()).catch(() => {});
   }, []);
   const toggle = async (v: boolean) => {
     try {
@@ -70,6 +76,10 @@ export function StartupCard() {
       <label className="check" style={{ fontSize: 13 }}>
         <input type="checkbox" checked={!!on} disabled={on === null} onChange={(e) => toggle(e.target.checked)} />
         Windows 시작 시 자동 실행 (트레이에서 조용히 시작)
+      </label>
+      <label className="check" style={{ fontSize: 13, marginTop: 8 }}>
+        <input type="checkbox" checked={!!hud} disabled={hud === null} onChange={(e) => api.setHud(e.target.checked).catch((x) => setErr(String(x)))} />
+        화면 위에 한도 HUD 띄우기 (드래그로 이동 · 더블클릭으로 열기 · 우클릭 메뉴)
       </label>
       {err && <div className="notice" style={{ marginTop: 8 }}>{err}</div>}
     </Card>
