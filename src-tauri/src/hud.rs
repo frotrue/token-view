@@ -62,6 +62,11 @@ pub fn set_visible(app: &AppHandle, show: bool) -> tauri::Result<()> {
             w.set_position(p)?;
         }
         w.show()?;
+        #[cfg(windows)]
+        {
+            let hwnd = w.hwnd()?.0 as isize;
+            app.run_on_main_thread(move || topmost::watch(hwnd))?;
+        }
     }
     let state = app.state::<AppState>();
     if let Ok(c) = db::open(&state.db_path) {
@@ -89,4 +94,69 @@ pub fn remember_position(app: &AppHandle) {
             let _ = db::set_setting(&c, "hud_pos", &format!("{},{}", p.x, p.y));
         }
     });
+}
+
+/// "Always on top" only puts the HUD in the topmost band; any other topmost window
+/// activated later (the taskbar, other overlays) lands above it. Re-raise it every
+/// time another app comes to the foreground.
+#[cfg(windows)]
+mod topmost {
+    use std::sync::atomic::{AtomicIsize, Ordering};
+    use std::sync::mpsc::{channel, Sender};
+    use std::sync::{Once, OnceLock};
+    use std::time::Duration;
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::UI::Accessibility::{SetWinEventHook, HWINEVENTHOOK};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, EVENT_SYSTEM_FOREGROUND, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+        WINEVENT_OUTOFCONTEXT, WINEVENT_SKIPOWNPROCESS,
+    };
+
+    static HUD: AtomicIsize = AtomicIsize::new(0);
+    static HOOK: Once = Once::new();
+    static RAISE: OnceLock<Sender<()>> = OnceLock::new();
+
+    fn raise() {
+        let hud = HUD.load(Ordering::Relaxed);
+        if hud != 0 {
+            // A hidden HUD stays hidden: no SWP_SHOWWINDOW.
+            unsafe { SetWindowPos(hud as HWND, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE) };
+        }
+    }
+
+    unsafe extern "system" fn on_foreground(_: HWINEVENTHOOK, _: u32, _: HWND, _: i32, _: i32, _: u32, _: u32) {
+        if let Some(tx) = RAISE.get() {
+            let _ = tx.send(());
+        }
+    }
+
+    /// Out-of-context hooks are delivered through the installing thread's message
+    /// loop, so this must run on the main thread.
+    pub fn watch(hwnd: isize) {
+        HUD.store(hwnd, Ordering::Relaxed);
+        HOOK.call_once(|| unsafe {
+            // The newly active app often re-raises itself just after it gets focus,
+            // so raising once at the event loses that race. Raise a few more times.
+            let (tx, rx) = channel();
+            let _ = RAISE.set(tx);
+            std::thread::spawn(move || {
+                while rx.recv().is_ok() {
+                    for ms in [0, 150, 500, 1500] {
+                        std::thread::sleep(Duration::from_millis(ms));
+                        while rx.try_recv().is_ok() {}
+                        raise();
+                    }
+                }
+            });
+            SetWinEventHook(
+                EVENT_SYSTEM_FOREGROUND,
+                EVENT_SYSTEM_FOREGROUND,
+                std::ptr::null_mut(),
+                Some(on_foreground),
+                0,
+                0,
+                WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+            );
+        });
+    }
 }
