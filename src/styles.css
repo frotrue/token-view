@@ -799,3 +799,69 @@ button:focus-visible, summary:focus-visible, a:focus-visible, .tbl-wrap:focus-vi
   .onboarding-hero h1 { font-size: 29px; }
   .cloud-actions .btn { white-space: normal; }
 }
+
+/* ---------------------------------------------------------------- HUD overlay window */
+/* Always dark: it floats over whatever is on screen, not over the app's page. */
+.hud-root {
+  color-scheme: dark;
+  --claude: #d95926;
+  --codex: #3987e5;
+}
+.hud-root,
+.hud-root body,
+.hud-root #root {
+  background: transparent;
+  height: auto;
+  overflow: hidden;
+}
+.hud {
+  display: inline-flex;
+  gap: 6px;
+  width: max-content;
+  padding: 3px;
+  user-select: none;
+  cursor: default;
+}
+.hud-pill {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28px;
+  padding: 0 11px 0 9px;
+  border-radius: 14px;
+  background: rgba(23, 23, 22, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: #fff;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.hud-pill.claude { border-color: color-mix(in srgb, var(--claude) 45%, transparent); }
+.hud-pill.codex { border-color: color-mix(in srgb, var(--codex) 45%, transparent); }
+.hud-pill.error { border-color: rgba(208, 59, 59, 0.75); }
+.hud-pill.empty { color: #898781; padding: 0 12px; }
+.hud-pill svg { flex: none; }
+.hud-group,
+.hud-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.hud-group { gap: 8px; }
+.hud-win { color: #898781; font-size: 11px; }
+.hud-pct { font-weight: 650; font-variant-numeric: tabular-nums; }
+.hud-pct.est { text-decoration: underline dotted rgba(255, 255, 255, 0.45); text-underline-offset: 3px; }
+.hud-pct.warn { color: #fab219; }
+.hud-pct.danger { color: #f06a6a; }
+.hud-reset { color: #c3c2b7; font-size: 12px; font-variant-numeric: tabular-nums; }
+.hud-sep { width: 1px; height: 12px; background: rgba(255, 255, 255, 0.16); }
+.hud-error-text { color: #f08a8a; font-weight: 600; }
+.hud-warn {
+  display: inline-grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #d03b3b;
+  font-size: 10px;
+  font-weight: 700;
+}
