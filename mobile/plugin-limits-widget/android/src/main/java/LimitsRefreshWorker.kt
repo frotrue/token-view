@@ -1,9 +1,9 @@
 package com.tokenview.widget
 
 import android.content.Context
-import androidx.work.Constraints
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import androidx.work.ExistingPeriodicWorkPolicy
-import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.Worker
@@ -41,7 +41,7 @@ class LimitsRefreshWorker(context: Context, params: WorkerParameters) : Worker(c
             return
         }
         val target = WidgetStore.refreshTarget(applicationContext) ?: return
-        if (target.state.provider != "google") return
+        if (target.state.provider != "google" || !hasInternet()) return
         val request = AuthorizationRequest.builder().setRequestedScopes(listOf(
             Scope("https://www.googleapis.com/auth/drive.appdata"),
             Scope("https://www.googleapis.com/auth/userinfo.email"),
@@ -78,6 +78,14 @@ class LimitsRefreshWorker(context: Context, params: WorkerParameters) : Worker(c
         if (!isStopped && LimitsWidgetProvider.widgetIds(applicationContext).isNotEmpty()) {
             WidgetStore.saveRefreshed(applicationContext, target, state)
         }
+    }
+
+    private fun hasInternet(): Boolean {
+        return try {
+            val connectivity = applicationContext.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return false
+            val network = connectivity.activeNetwork ?: return false
+            connectivity.getNetworkCapabilities(network)?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
+        } catch (_: Exception) { false }
     }
 
     private fun propertyTime(props: JSONObject, key: String): Double =
@@ -119,12 +127,12 @@ class LimitsRefreshWorker(context: Context, params: WorkerParameters) : Worker(c
         private const val MAX_BYTES = 8 * 1024 * 1024
 
         fun syncSchedule(context: Context) {
-            if (WidgetStore.read(context)?.provider != "google" || LimitsWidgetProvider.widgetIds(context).isEmpty()) {
+            if (WidgetStore.read(context) == null || LimitsWidgetProvider.widgetIds(context).isEmpty()) {
                 cancel(context)
                 return
             }
+            // Redraw relative times and expired limits for both providers, even offline.
             val work = PeriodicWorkRequestBuilder<LimitsRefreshWorker>(15, TimeUnit.MINUTES)
-                .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
                 .build()
             WorkManager.getInstance(context).enqueueUniquePeriodicWork(NAME, ExistingPeriodicWorkPolicy.KEEP, work)
         }
