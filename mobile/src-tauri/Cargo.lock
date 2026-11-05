@@ -3183,6 +3183,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tauri-plugin-limits-widget"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+]
+
+[[package]]
 name = "tauri-runtime"
 version = "2.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3385,6 +3394,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-apk-update",
  "tauri-plugin-google-auth",
+ "tauri-plugin-limits-widget",
 ]
 
 [[package]]

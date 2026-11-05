@@ -1,0 +1,348 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@android:id/background"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_background"
+    android:padding="12dp"
+    android:contentDescription="@string/widget_accessibility">
+    <LinearLayout
+        android:id="@+id/widget_columns"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:visibility="visible">
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="18dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <ImageView
+                    android:layout_width="8dp"
+                    android:layout_height="8dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/widget_dot_claude" />
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginLeft="6dp"
+                    android:layout_weight="1"
+                    android:includeFontPadding="false"
+                    android:singleLine="true"
+                    android:text="Claude"
+                    android:textColor="@color/widget_ink"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+                <TextView
+                    android:id="@+id/claude_age"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:includeFontPadding="false"
+                    android:gravity="right"
+                    android:singleLine="true"
+                    android:text="12분 전"
+                    android:textColor="@color/widget_muted"
+                    android:textSize="11sp" />
+            </LinearLayout>
+            <LinearLayout
+                android:id="@+id/claude_5h"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="vertical"
+                android:importantForAccessibility="yes"
+                android:contentDescription="Claude 5시간 42퍼센트 사용, 2시간 13분 후 리셋, 12분 전 수집">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:includeFontPadding="false"
+                        android:importantForAccessibility="no"
+                        android:text="@string/widget_window_5h"
+                        android:textColor="@color/widget_ink_2"
+                        android:textSize="11sp" />
+                    <TextView
+                        android:id="@+id/claude_5h_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:includeFontPadding="false"
+                        android:importantForAccessibility="no"
+                        android:gravity="right"
+                        android:text="42%"
+                        android:textColor="@color/widget_ink"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+                <ProgressBar
+                    android:id="@+id/claude_5h_progress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="4dp"
+                    android:layout_marginTop="3dp"
+                    android:importantForAccessibility="no"
+                    android:indeterminate="false"
+                    android:max="100"
+                    android:progress="42"
+                    android:progressTint="@color/widget_claude"
+                    android:progressBackgroundTint="@color/widget_grid" />
+                <TextView
+                    android:id="@+id/claude_5h_reset"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:includeFontPadding="false"
+                    android:importantForAccessibility="no"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:text="2시간 13분 후 리셋"
+                    android:textColor="@color/widget_muted"
+                    android:textSize="10sp" />
+            </LinearLayout>
+            <LinearLayout
+                android:id="@+id/claude_week"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="vertical"
+                android:importantForAccessibility="yes"
+                android:contentDescription="Claude 주간 67퍼센트 사용, 3일 4시간 후 리셋, 12분 전 수집">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:includeFontPadding="false"
+                        android:importantForAccessibility="no"
+                        android:text="@string/widget_window_week"
+                        android:textColor="@color/widget_ink_2"
+                        android:textSize="11sp" />
+                    <TextView
+                        android:id="@+id/claude_week_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:includeFontPadding="false"
+                        android:importantForAccessibility="no"
+                        android:gravity="right"
+                        android:text="67%"
+                        android:textColor="@color/widget_ink"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+                <ProgressBar
+                    android:id="@+id/claude_week_progress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="4dp"
+                    android:layout_marginTop="3dp"
+                    android:importantForAccessibility="no"
+                    android:indeterminate="false"
+                    android:max="100"
+                    android:progress="67"
+                    android:progressTint="@color/widget_claude"
+                    android:progressBackgroundTint="@color/widget_grid" />
+                <TextView
+                    android:id="@+id/claude_week_reset"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:includeFontPadding="false"
+                    android:importantForAccessibility="no"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:text="3일 4시간 후 리셋"
+                    android:textColor="@color/widget_muted"
+                    android:textSize="10sp" />
+            </LinearLayout>
+        </LinearLayout>
+        <ImageView
+            android:layout_width="1dp"
+            android:layout_height="match_parent"
+            android:layout_marginLeft="10dp"
+            android:layout_marginRight="10dp"
+            android:layout_marginTop="2dp"
+            android:layout_marginBottom="2dp"
+            android:importantForAccessibility="no"
+            android:background="@color/widget_grid" />
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical">
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="18dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+                <ImageView
+                    android:layout_width="8dp"
+                    android:layout_height="8dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/widget_dot_codex" />
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginLeft="6dp"
+                    android:layout_weight="1"
+                    android:includeFontPadding="false"
+                    android:singleLine="true"
+                    android:text="Codex"
+                    android:textColor="@color/widget_ink"
+                    android:textSize="13sp"
+                    android:textStyle="bold" />
+                <TextView
+                    android:id="@+id/codex_age"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:includeFontPadding="false"
+                    android:gravity="right"
+                    android:singleLine="true"
+                    android:text="3분 전"
+                    android:textColor="@color/widget_muted"
+                    android:textSize="11sp" />
+            </LinearLayout>
+            <LinearLayout
+                android:id="@+id/codex_5h"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="vertical"
+                android:importantForAccessibility="yes"
+                android:contentDescription="Codex 5시간 8퍼센트 사용, 4시간 51분 후 리셋, 3분 전 수집">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:includeFontPadding="false"
+                        android:importantForAccessibility="no"
+                        android:text="@string/widget_window_5h"
+                        android:textColor="@color/widget_ink_2"
+                        android:textSize="11sp" />
+                    <TextView
+                        android:id="@+id/codex_5h_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:includeFontPadding="false"
+                        android:importantForAccessibility="no"
+                        android:gravity="right"
+                        android:text="8%"
+                        android:textColor="@color/widget_ink"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+                <ProgressBar
+                    android:id="@+id/codex_5h_progress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="4dp"
+                    android:layout_marginTop="3dp"
+                    android:importantForAccessibility="no"
+                    android:indeterminate="false"
+                    android:max="100"
+                    android:progress="8"
+                    android:progressTint="@color/widget_codex"
+                    android:progressBackgroundTint="@color/widget_grid" />
+                <TextView
+                    android:id="@+id/codex_5h_reset"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:includeFontPadding="false"
+                    android:importantForAccessibility="no"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:text="4시간 51분 후 리셋"
+                    android:textColor="@color/widget_muted"
+                    android:textSize="10sp" />
+            </LinearLayout>
+            <LinearLayout
+                android:id="@+id/codex_week"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:orientation="vertical"
+                android:importantForAccessibility="yes"
+                android:contentDescription="Codex 주간 23퍼센트 사용, 5일 20시간 후 리셋, 3분 전 수집">
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
+                    <TextView
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:includeFontPadding="false"
+                        android:importantForAccessibility="no"
+                        android:text="@string/widget_window_week"
+                        android:textColor="@color/widget_ink_2"
+                        android:textSize="11sp" />
+                    <TextView
+                        android:id="@+id/codex_week_value"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:includeFontPadding="false"
+                        android:importantForAccessibility="no"
+                        android:gravity="right"
+                        android:text="23%"
+                        android:textColor="@color/widget_ink"
+                        android:textSize="15sp"
+                        android:textStyle="bold" />
+                </LinearLayout>
+                <ProgressBar
+                    android:id="@+id/codex_week_progress"
+                    style="?android:attr/progressBarStyleHorizontal"
+                    android:layout_width="match_parent"
+                    android:layout_height="4dp"
+                    android:layout_marginTop="3dp"
+                    android:importantForAccessibility="no"
+                    android:indeterminate="false"
+                    android:max="100"
+                    android:progress="23"
+                    android:progressTint="@color/widget_codex"
+                    android:progressBackgroundTint="@color/widget_grid" />
+                <TextView
+                    android:id="@+id/codex_week_reset"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp"
+                    android:includeFontPadding="false"
+                    android:importantForAccessibility="no"
+                    android:singleLine="true"
+                    android:ellipsize="end"
+                    android:text="5일 20시간 후 리셋"
+                    android:textColor="@color/widget_muted"
+                    android:textSize="10sp" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+    <TextView
+        android:id="@+id/widget_empty"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:includeFontPadding="false"
+        android:gravity="center"
+        android:maxLines="2"
+        android:text="@string/widget_empty"
+        android:textColor="@color/widget_ink_2"
+        android:textSize="13sp"
+        android:visibility="gone" />
+</FrameLayout>

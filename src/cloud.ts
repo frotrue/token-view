@@ -8,6 +8,7 @@ import { emptyPricing, makeDemoSnapshot } from './cloud/demo';
 import * as github from './cloud/github';
 import * as google from './cloud/google';
 import { AuthExpired, type RemoteFile } from './cloud/remote';
+import { clearWidget, syncWidget } from './cloud/widget';
 
 export type { CloudViewState, CloudSnapshot } from './cloud/types';
 /** The Android app is a Tauri app too, but it is a reader like the web build. */
@@ -115,6 +116,7 @@ function expire() {
 }
 
 function forgetAccount() {
+  clearWidget();
   revision++; inFlight = null; current = null; base = null; token = null; account = null; pendingNonce = null;
   driveFiles = { settings: null, requests: new Map() };
   github.clearGithubCache();
@@ -124,6 +126,7 @@ function forgetAccount() {
 
 function installSnapshot(value: CloudSnapshot, mode: CloudViewState['mode'] = state.mode) {
   current = value;
+  if (mode === 'cloud' && account) syncWidget(value, account.provider ?? 'google');
   const expiredRequest = state.refreshRequestedAt && Date.now() - state.refreshRequestedAt > 10 * 60_000;
   if (expiredRequest) pendingNonce = null;
   patch({ hasData: true, capturedAt: value.capturedAt, mode, selectedDeviceId: value.device.id,

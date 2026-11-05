@@ -1,0 +1,13 @@
+[package]
+name = "tauri-plugin-limits-widget"
+version = "0.1.0"
+description = "Measured Claude and Codex limits for the Token View Android widget"
+edition = "2021"
+links = "tauri-plugin-limits-widget"
+
+[dependencies]
+tauri = "2"
+serde_json = "1"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
