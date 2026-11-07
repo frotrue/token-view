@@ -22,7 +22,9 @@ export type UpdateState =
   | { kind: "error"; message: string };
 
 const CHECK_EVERY = 6 * 3_600_000;
-export const updatesEnabled = api.inTauri || isNativeMobile;
+/** The Google Play build is updated by Play and has no APK installer. */
+export const playBuild = import.meta.env.VITE_DISTRIBUTION === "play";
+export const updatesEnabled = api.inTauri || (isNativeMobile && !playBuild);
 
 // Desktop: the Tauri updater (signed latest.json). Phone: the release APK.
 async function find(): Promise<Update | null> {
@@ -66,8 +68,8 @@ export function useUpdater() {
   }, []);
 
   useEffect(() => {
+    if (api.inTauri || isNativeMobile) getVersion().then(setVersion).catch(() => {});
     if (!updatesEnabled) return;
-    getVersion().then(setVersion).catch(() => {});
     run();
     const t = setInterval(() => run(), CHECK_EVERY);
     // A phone app is resumed far more often than it is started.

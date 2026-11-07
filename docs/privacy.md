@@ -1,6 +1,6 @@
 # Token View 개인정보처리방침 · Privacy Policy
 
-시행일: 2026-10-15
+시행일: 2026-11-07
 
 Token View는 Claude Code와 Codex 사용량을 보여 주는 오픈소스 앱이에요(PC용 Windows 앱, Android 앱, 웹앱). 개발자는 서버를 운영하지 않고, 사용자의 데이터를 받거나 보관하지 않아요.
 
@@ -11,6 +11,7 @@ Token View는 Claude Code와 Codex 사용량을 보여 주는 오픈소스 앱�
   - 사용자 본인의 **구글 드라이브 앱 전용 공간**(`drive.appdata`): Token View만 접근할 수 있는 숨겨진 폴더예요. 드라이브의 다른 파일은 보거나 바꾸지 않아요.
   - 사용자 본인의 **GitHub 비공개 저장소**: 사용자가 만든 토큰으로 그 저장소에만 접근해요.
 - **구글 계정 이메일:** 어떤 계정에 연결됐는지 화면에 보여 주는 데만 써요.
+- **홈 화면 위젯(Android):** 마지막으로 받은 한도 값(사용률, 리셋 시각, 수집 시각)과 선택한 PC의 식별자만 휴대폰 안에 저장해요. 연결을 해제하면 지워요.
 
 ## Google 사용자 데이터
 
@@ -31,4 +32,4 @@ Token View는 Claude Code와 Codex 사용량을 보여 주는 오픈소스 앱�
 
 ---
 
-**English summary.** Token View has no server and the developer receives no user data. Usage statistics stay on the user's PC. They are uploaded only when the user connects sync, and only to the user's own Google Drive app-data folder (`drive.appdata`) or the user's own private GitHub repository. The Google account email is used only to label the connection. Data from Google APIs is used solely to sync the user's own devices: it is not shared, sold, used for advertising or used to train AI models. Token View's use of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements. Disconnecting in the app removes local tokens and revokes Google access. Access can also be revoked at <https://myaccount.google.com/permissions>. Contact: GitHub issues.
+**English summary.** Token View has no server and the developer receives no user data. Usage statistics stay on the user's PC. They are uploaded only when the user connects sync, and only to the user's own Google Drive app-data folder (`drive.appdata`) or the user's own private GitHub repository. The Google account email is used only to label the connection. The Android home-screen widget keeps only the latest limit readings and the selected PC's identifier on the phone, and clears them on disconnect. Data from Google APIs is used solely to sync the user's own devices: it is not shared, sold, used for advertising or used to train AI models. Token View's use of information received from Google APIs adheres to the [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy), including the Limited Use requirements. Disconnecting in the app removes local tokens and revokes Google access. Access can also be revoked at <https://myaccount.google.com/permissions>. Contact: GitHub issues.

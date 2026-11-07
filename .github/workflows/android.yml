@@ -1,7 +1,10 @@
 name: Android
 
-# Builds the signed phone app (mobile/). Pull requests get the APK as an artifact;
-# a version tag also attaches it to that GitHub Release.
+# Builds the signed phone app (mobile/) in two flavors:
+# - github: the sideloaded APK that updates itself from GitHub Releases. Pull
+#   requests get it as an artifact; a version tag also attaches it to the release.
+# - play: the Google Play bundle (AAB) without the self-updater, signed with the
+#   same key, which Play uses as the upload key. Uploaded to Play Console by hand.
 on:
   pull_request:
   push:
@@ -17,7 +20,12 @@ concurrency:
 
 jobs:
   apk:
+    name: ${{ matrix.flavor == 'play' && 'aab' || 'apk' }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        flavor: [github, play]
     env:
       NDK_VERSION: 27.2.12479018
     steps:
@@ -45,6 +53,7 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: mobile/src-tauri
+          key: ${{ matrix.flavor }}
 
       - run: npm ci
 
@@ -64,29 +73,56 @@ jobs:
           python3 ci/configure_signing.py "$RUNNER_TEMP/token-view.jks" "$PASSWORD"
 
       - name: Build APK
+        if: matrix.flavor == 'github'
         working-directory: mobile
         run: |
           code=$(node ci/version_code.mjs)
-          npm run tauri -- android build --apk --target aarch64 --ci --config "{\"bundle\":{\"android\":{\"versionCode\":$code}}}"
+          npm run tauri -- android build --apk --target aarch64 --ci --features github-updates --config "{\"bundle\":{\"android\":{\"versionCode\":$code}}}"
 
-      - name: Collect APK
+      - name: Build AAB
+        if: matrix.flavor == 'play'
+        working-directory: mobile
+        env:
+          VITE_DISTRIBUTION: play
+        run: |
+          code=$(node ci/version_code.mjs)
+          npm run tauri -- android build --aab --target aarch64 --ci --config "{\"bundle\":{\"android\":{\"versionCode\":$code}}}"
+
+      - name: Collect the build
         id: apk
         run: |
           version=$(node -p "require('./package.json').version")
-          src=$(find mobile/src-tauri/gen/android/app/build/outputs/apk -name '*release*.apk' | head -n1)
+          outputs=mobile/src-tauri/gen/android/app/build/outputs
+          if [ "${{ matrix.flavor }}" = play ]; then
+            src=$(find "$outputs/bundle" -name '*release*.aab' | head -n1)
+            dest="out/Token.View_${version}_play.aab"
+          else
+            src=$(find "$outputs/apk" -name '*release*.apk' | head -n1)
+            dest="out/Token.View_${version}_android-arm64.apk"
+          fi
           test -n "$src"
           mkdir -p out
-          cp "$src" "out/Token.View_${version}_android-arm64.apk"
-          echo "path=out/Token.View_${version}_android-arm64.apk" >> "$GITHUB_OUTPUT"
+          cp "$src" "$dest"
+          echo "path=$dest" >> "$GITHUB_OUTPUT"
+
+      - name: No self-update permission in the Play build
+        if: matrix.flavor == 'play'
+        run: |
+          manifests=$(find mobile/src-tauri/gen/android/app/build/intermediates -ipath '*merged_manifest*release*' -name AndroidManifest.xml)
+          test -n "$manifests"
+          if grep -l REQUEST_INSTALL_PACKAGES $manifests; then
+            echo "::error::the Play build must not request REQUEST_INSTALL_PACKAGES"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@v4
         with:
-          name: token-view-android
+          name: ${{ matrix.flavor == 'play' && 'token-view-play' || 'token-view-android' }}
           path: ${{ steps.apk.outputs.path }}
           retention-days: 14
 
       - name: Attach to the release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: matrix.flavor == 'github' && startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

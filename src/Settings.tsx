@@ -5,7 +5,7 @@ import { ExportCard, LiveCard, NotifyCard, StartupCard } from "./SettingsExtra";
 import { BrowserSupportCard, CloudPanel } from "./CloudPanel";
 import { isNativeMobile, useCloud } from "./cloud";
 import { Card, Seg, useApp } from "./ui";
-import { updatesEnabled, type useUpdater } from "./update";
+import { playBuild, updatesEnabled, type useUpdater } from "./update";
 
 type Updater = ReturnType<typeof useUpdater>;
 
@@ -231,7 +231,7 @@ function AppInfoCard({ updater }: { updater: Updater }) {
     <Card
       title="앱 정보 · 업데이트"
       right={
-        st.kind === "available" ? (
+        playBuild ? null : st.kind === "available" ? (
           <button className="btn primary" onClick={updater.install}>
             {isNativeMobile ? "내려받아 설치" : "업데이트 후 다시 시작"}
           </button>
@@ -246,8 +246,8 @@ function AppInfoCard({ updater }: { updater: Updater }) {
         <dt>현재 버전</dt>
         <dd>{updater.version ? `v${updater.version}` : "-"}</dd>
         <dt>업데이트</dt>
-        <dd>{line ?? "실행할 때와 6시간마다 자동으로 확인해요"}</dd>
-        <dt>배포</dt>
+        <dd>{playBuild ? "Google Play에서 업데이트돼요" : line ?? "실행할 때와 6시간마다 자동으로 확인해요"}</dd>
+        <dt>{playBuild ? "소스" : "배포"}</dt>
         <dd>
           <code>github.com/frotrue/token-view</code>
         </dd>

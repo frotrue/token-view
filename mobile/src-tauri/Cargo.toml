@@ -14,8 +14,14 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-google-auth = { path = "../plugin-google-auth" }
-tauri-plugin-apk-update = { path = "../plugin-apk-update" }
+tauri-plugin-apk-update = { path = "../plugin-apk-update", optional = true }
 tauri-plugin-limits-widget = { path = "../plugin-limits-widget" }
+
+[features]
+# The sideloaded APK updates itself from GitHub Releases. The Google Play build
+# leaves this off: Play apps may only be updated by Play, and without the plugin
+# the app does not request REQUEST_INSTALL_PACKAGES.
+github-updates = ["dep:tauri-plugin-apk-update"]
 
 [profile.release]
 opt-level = "s"
