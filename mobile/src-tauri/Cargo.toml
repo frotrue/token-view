@@ -15,6 +15,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-google-auth = { path = "../plugin-google-auth" }
 tauri-plugin-apk-update = { path = "../plugin-apk-update" }
+tauri-plugin-limits-widget = { path = "../plugin-limits-widget" }
 
 [profile.release]
 opt-level = "s"

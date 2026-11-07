@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="widget_label">Token View 한도</string>
+    <string name="widget_description">Claude·Codex 5시간·주간 한도</string>
+    <string name="widget_empty">Token View 앱에서 구글 드라이브를 연결해 주세요</string>
+    <string name="widget_window_5h">5시간</string>
+    <string name="widget_window_week">주간</string>
+    <string name="widget_no_record">기록 없음</string>
+    <string name="widget_no_hook">PC 상태줄 미연결</string>
+    <string name="widget_reset_passed">리셋됨 · 새 기록 대기</string>
+    <string name="widget_reset_unknown">리셋 시각 없음</string>
+    <string name="widget_missing">—</string>
+    <string name="widget_reset_soon">곧 리셋</string>
+    <string name="widget_reset_minutes">%d분 후 리셋</string>
+    <string name="widget_reset_hours">%d시간 후 리셋</string>
+    <string name="widget_reset_hours_minutes">%1$d시간 %2$d분 후 리셋</string>
+    <string name="widget_reset_days">%d일 후 리셋</string>
+    <string name="widget_reset_days_hours">%1$d일 %2$d시간 후 리셋</string>
+    <string name="widget_age_now">방금</string>
+    <string name="widget_age_minutes">%d분 전</string>
+    <string name="widget_age_hours">%d시간 전</string>
+    <string name="widget_age_days">%d일 전</string>
+    <string name="widget_accessibility">Token View 한도 위젯, 눌러서 앱 열기</string>
+    <string name="widget_slot_accessibility">%1$s %2$s %3$d퍼센트 사용, %4$s, %5$s 수집</string>
+</resources>
