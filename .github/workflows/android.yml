@@ -27,7 +27,8 @@ jobs:
       matrix:
         flavor: [github, play]
     env:
-      NDK_VERSION: 27.2.12479018
+      # r28+ links native code for 16 KB pages, which Play requires for Android 15+.
+      NDK_VERSION: 28.2.13676358
     steps:
       - uses: actions/checkout@v5
 
@@ -104,6 +105,9 @@ jobs:
           mkdir -p out
           cp "$src" "$dest"
           echo "path=$dest" >> "$GITHUB_OUTPUT"
+
+      - name: Native code supports 16 KB pages
+        run: python3 mobile/ci/check_page_size.py "${{ steps.apk.outputs.path }}"
 
       - name: No self-update permission in the Play build
         if: matrix.flavor == 'play'
