@@ -118,3 +118,6 @@ GitHub 저장소의 **Settings → Secrets and variables → Actions**에 등록
   - 베타를 설치했으면 베타도 받고, 정식 버전을 설치했으면 정식 버전만 받아요.
   - Android는 같은 키로 서명된 APK만 업데이트로 받아들여요. 내려받는 주소도 이 저장소의 릴리스로 제한해요.
   - versionCode는 `mobile/ci/version_code.mjs`가 버전에서 계산해요(`x.y.z-beta.N`의 N은 98 이하).
+- **Google Play 빌드:** Android 워크플로가 APK와 함께 `Token.View_<버전>_play.aab`(아티팩트 `token-view-play`)도 만들어요. 이 빌드는 자체 업데이트 기능(`github-updates` 기능, `REQUEST_INSTALL_PACKAGES` 권한)이 빠져 있고 Play가 업데이트해요. Play Console에는 직접 올려요.
+  - 같은 키로 서명하지만 Play에서는 이 키가 **업로드 키**이고, 실제 설치되는 앱은 Play 앱 서명 키로 다시 서명돼요. 그래서 Play 앱 서명 키의 SHA-1로 Android OAuth 클라이언트를 하나 더 만들어야 Play 설치본에서 구글 로그인이 돼요(Play Console → 테스트 및 출시 → 앱 무결성에서 확인).
+  - 서명 키가 달라서 APK 설치본과 Play 설치본은 서로 업데이트되지 않아요. 옮기려면 지우고 새로 설치해요.

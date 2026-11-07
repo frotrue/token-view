@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/mobile-schema.json",
+  "identifier": "apk-update",
+  "description": "Sideloaded build only: install app updates from GitHub Releases",
+  "windows": ["main"],
+  "permissions": ["apk-update:default"]
+}
